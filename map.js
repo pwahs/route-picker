@@ -8,4 +8,7 @@ zoom: 10 // starting zoom
 });
 
 VectorTextProtocol.addProtocols(maplibregl);
-PathChooser.addToMapOnLoad(map, 'gpx://./data/36055.gpx')
+PathChooser.loadFromUrl('./data/GPS-Daten_Knotenpunkte.xlsx').then(() => {
+    PathChooser.showWaypoints(map);
+});
+// PathChooser.addToMapOnLoad(map, 'gpx://./data/36055.gpx')

@@ -2,7 +2,7 @@
 window.PathChooser = window.PathChooser || {};
 
 // ── Configuration ──────────────────────────────────────────────────
-const MATCH_THRESHOLD_METERS = 50;
+const MATCH_THRESHOLD_METERS = 10;
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -39,7 +39,8 @@ let _unofficialCounter = 1;
  * @property {string}   id              – unique identifier (e.g. "p1", "p2", …)
  * @property {string}   startWaypointId – reference into waypoints map
  * @property {string}   endWaypointId   – reference into waypoints map
- * @property {number[][}} trackPoints   – array of [lng, lat] forming the full track
+ * @property {string}   tag             – style key ("hiking", "biking", "skiing", …)
+ * @property {number[][]} trackPoints   – array of [lng, lat] forming the full track
  * @property {string}   source          – origin filename / URL
  */
 
@@ -113,13 +114,14 @@ class PathChooserStore {
      * Add a path between two waypoints.
      * @param {string} startWaypointId
      * @param {string} endWaypointId
+     * @param {string} tag  style key ("hiking", "biking", "skiing", …)
      * @param {number[][]} trackPoints  array of [lng, lat]
      * @param {string} source  origin filename / URL
      * @returns {Path}
      */
-    addPath(startWaypointId, endWaypointId, trackPoints, source) {
+    addPath(startWaypointId, endWaypointId, tag, trackPoints, source) {
         const id = 'p' + _nextPathId++;
-        const path = { id, startWaypointId, endWaypointId, trackPoints, source };
+        const path = { id, startWaypointId, endWaypointId, tag, trackPoints, source };
         this.paths.set(id, path);
 
         // Bidirectional adjacency
@@ -161,13 +163,175 @@ window.PathChooser.store = store;
  * 2. Parse waypoints → call store.addWaypoint(label, tag, coords) for each.
  * 3. Parse tracks  → for each track, resolve start/end via
  *    store.resolveWaypoint(coords), then call
- *    store.addPath(startId, endId, trackPoints, url).
+ *    store.addPath(startId, endId, tag, trackPoints, url).
  *
  * @param {string} url  URL to a GPX (or other) file
  * @returns {Promise<PathChooserStore>}
  */
 window.PathChooser.loadFromUrl = async function (url) {
     console.log(`[PathChooser] loadFromUrl called with: ${url}`);
-    // TODO: fetch + parse + populate store
+
+    if (url.toLowerCase().endsWith('.xlsx')) {
+        await loadFromXlsx(url);
+    }
+
     return store;
 };
+
+/**
+ * Fetch an xlsx file and parse waypoints from it.
+ *
+ * Sheet layout per sheet:
+ * - Sheet name → waypoint tag
+ * - Find the cell containing "Knotenpunkte"
+ * - The column underneath holds waypoint labels
+ * - The next column holds latitude strings, e.g. "52.753252°N"
+ * - The column after that holds longitude strings, e.g. "13.471438°E"
+ *
+ * @param {string} url
+ * @returns {Promise<void>}
+ */
+async function loadFromXlsx(url) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`[PathChooser] Failed to fetch ${url}: ${response.status}`);
+    const arrayBuffer = await response.arrayBuffer();
+    console.log(`[PathChooser] Fetched ${url} (${arrayBuffer.byteLength} bytes)`);
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    console.log(`[PathChooser] Sheets found: ${workbook.SheetNames.join(', ')}`);
+
+    for (const sheetName of workbook.SheetNames) {
+        const tag = sheetName;
+        const sheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+
+        // Find the row and column of the "Knotenpunkte" header cell
+        let headerRow = -1;
+        let headerCol = -1;
+        outer: for (let r = 0; r < rows.length; r++) {
+            for (let c = 0; c < rows[r].length; c++) {
+                if (typeof rows[r][c] === 'string' && rows[r][c].trim() === 'Knotenpunkte') {
+                    headerRow = r;
+                    headerCol = c;
+                    break outer;
+                }
+            }
+        }
+
+        if (headerRow === -1) {
+            console.warn(`[PathChooser] No "Knotenpunkte" cell found in sheet "${sheetName}", skipping.`);
+            continue;
+        }
+
+        console.log(`[PathChooser] Sheet "${sheetName}": found "Knotenpunkte" at row ${headerRow}, col ${headerCol}`);
+
+        // Rows below the header: label | lat | lng
+        for (let r = headerRow + 1; r < rows.length; r++) {
+            const row = rows[r];
+            const label = row[headerCol];
+            const latStr = row[headerCol + 1];
+            const lngStr = row[headerCol + 2];
+
+            if (!label || !latStr || !lngStr) continue;
+
+            const lat = parseCoordinate(latStr);
+            const lng = parseCoordinate(lngStr);
+
+            if (lat === null || lng === null) {
+                console.warn(`[PathChooser] Could not parse coordinates for "${label}" in sheet "${sheetName}": ${latStr}, ${lngStr}`);
+                continue;
+            }
+
+            const wp = store.addWaypoint(String(label).trim(), tag, [lng, lat]);
+            console.log(`[PathChooser]   + ${wp.id} "${wp.label}" [${lng}, ${lat}] tag=${tag}`);
+        }
+    }
+
+    console.log(`[PathChooser] Done loading xlsx. Total waypoints: ${store.waypoints.size}`);
+}
+
+// ── Map display ────────────────────────────────────────────────────
+
+/**
+ * Add all waypoints from the store to a MapLibre map as circle + label layers.
+ * Waits for the map style to be loaded if necessary.
+ * @param {maplibregl.Map} map
+ */
+window.PathChooser.showWaypoints = function (map) {
+    function addLayers() {
+        const features = [];
+        for (const wp of store.waypoints.values()) {
+            features.push({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: wp.coords },
+                properties: { id: wp.id, label: wp.label, tag: wp.tag },
+            });
+        }
+
+        const sourceId = 'pathchooser-waypoints';
+
+        // Remove existing layers/source if re-called
+        if (map.getSource(sourceId)) {
+            if (map.getLayer(sourceId + '-labels')) map.removeLayer(sourceId + '-labels');
+            if (map.getLayer(sourceId + '-circles')) map.removeLayer(sourceId + '-circles');
+            map.removeSource(sourceId);
+        }
+
+        map.addSource(sourceId, {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features },
+        });
+
+        map.addLayer({
+            id: sourceId + '-circles',
+            type: 'circle',
+            source: sourceId,
+            paint: {
+                'circle-radius': 6,
+                'circle-color': '#e55e5e',
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#fff',
+            },
+        });
+
+        map.addLayer({
+            id: sourceId + '-labels',
+            type: 'symbol',
+            source: sourceId,
+            layout: {
+                'text-field': ['get', 'label'],
+                'text-size': 12,
+                'text-offset': [0, 1.5],
+                'text-anchor': 'top',
+            },
+            paint: {
+                'text-color': '#333',
+                'text-halo-color': '#fff',
+                'text-halo-width': 1,
+            },
+        });
+
+        console.log(`[PathChooser] showWaypoints: added ${features.length} waypoints to map`);
+    }
+
+    if (map.isStyleLoaded()) {
+        addLayers();
+    } else {
+        map.on('load', addLayers);
+    }
+};
+
+/**
+ * Parse a coordinate string like "52.753252°N" or "13.471438°E" into a signed float.
+ * South and West are returned as negative values.
+ * @param {string|number} value
+ * @returns {number|null}
+ */
+function parseCoordinate(value) {
+    if (typeof value === 'number') return value;
+    const match = String(value).trim().match(/^([\d.]+)[^A-Za-z\d]*([NSEWnsew])$/);
+    if (!match) return null;
+    let num = parseFloat(match[1]);
+    const dir = match[2].toUpperCase();
+    if (dir === 'S' || dir === 'W') num = -num;
+    return num;
+}
