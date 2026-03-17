@@ -847,6 +847,12 @@ function _updateNodeList() {
         });
         label.appendChild(badge);
 
+        const tagSpan = document.createElement('span');
+        tagSpan.textContent = `(${wp.tag})`;
+        tagSpan.style.fontStyle = 'italic';
+        tagSpan.style.color = '#666';
+        label.appendChild(tagSpan);
+
         const buttonContainer = document.createElement('div');
 
         // "Remove from here" button: trims tour back to this node
