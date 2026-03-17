@@ -105,6 +105,7 @@ class PathChooserStore {
     resolveWaypoint(coords) {
         const existing = this.findNearestWaypoint(coords);
         if (existing) return existing;
+        console.log("New unofficial waypoint U", _unofficialCounter, " created at " + coords[0] + "°N " + coords[1] + "°E");
         return this.addWaypoint('U' + _unofficialCounter++, 'unofficial', coords);
     }
 
@@ -447,9 +448,9 @@ async function loadFromGpx(url, tag) {
         }
 
         const startWp = store.resolveWaypoint(points[0]);
-        if (startWp.tag === 'unofficial') console.warn(`[PathChooser] Track "${trackName}": created unofficial waypoint "${startWp.label}" at start`);
+        // if (startWp.tag === 'unofficial') console.warn(`[PathChooser] Track "${trackName}": created unofficial waypoint "${startWp.label}" at start`);
         const endWp = store.resolveWaypoint(points[points.length - 1]);
-        if (endWp.tag === 'unofficial') console.warn(`[PathChooser] Track "${trackName}": created unofficial waypoint "${endWp.label}" at end`);
+        // if (endWp.tag === 'unofficial') console.warn(`[PathChooser] Track "${trackName}": created unofficial waypoint "${endWp.label}" at end`);
         const path = store.addPath(startWp.id, endWp.id, tag, points, trackName);
     }
 
@@ -532,7 +533,7 @@ function _updateTourVisuals() {
 
     // Update marker appearances
     for (const marker of _markers) {
-        console.log("Updating marker for waypoint " + marker._waypointId, " previewMode=" + window._previewMode);
+        // console.log("Updating marker for waypoint " + marker._waypointId, " previewMode=" + window._previewMode);
         const wpId = marker._waypointId;
         const el = marker._innerElement;
         const wp = store.waypoints.get(wpId);
