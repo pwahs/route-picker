@@ -23,22 +23,22 @@ PathChooser.styles['Nachbarregionen'] = {
 };
 
 // ── Path styles per tag ───────────────────────────────────────────
-PathChooser.styles['gute_beschaffenheit'] = {
+PathChooser.styles['Gute Beschaffenheit'] = {
     lineColor: 'red',
     lineWidth: 3,
 };
-PathChooser.styles['mittlere_beschaffenheit'] = {
+PathChooser.styles['Mittlere Beschaffenheit'] = {
     lineColor: 'red',
     lineWidth: 3,
     lineDasharray: [3, 3],  // 4px dash, 4px gap
 };
-PathChooser.styles['zu_nachbarn'] = {
+PathChooser.styles['Zu Nachbarn'] = {
     lineColor: 'grey',
     lineWidth: 3,
 };
 
 PathChooser.loadFromUrl('./data/GPS-Daten_Knotenpunkte.xlsx');
-PathChooser.loadFromUrl('./data/gute_beschaffenheit.gpx', 'gute_beschaffenheit');
-PathChooser.loadFromUrl('./data/mittlere_beschaffenheit.gpx', 'mittlere_beschaffenheit');
-PathChooser.loadFromUrl('./data/zu_nachbarn.gpx', 'zu_nachbarn');
+PathChooser.loadFromUrl('./data/gute_beschaffenheit.gpx', 'Gute Beschaffenheit');
+PathChooser.loadFromUrl('./data/mittlere_beschaffenheit.gpx', 'Mittlere Beschaffenheit');
+PathChooser.loadFromUrl('./data/zu_nachbarn.gpx', 'Zu Nachbarn');
 // PathChooser.addToMapOnLoad(map, 'gpx://./data/36055.gpx')

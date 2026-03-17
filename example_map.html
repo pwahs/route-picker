@@ -1,13 +1,35 @@
 <head>
+    <meta charset="UTF-8">
     <script src='https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js'></script>
     <script src="https://loc8.us/maplibre-gl-vector-text-protocol/dist/maplibre-gl-vector-text-protocol.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
     <script src="plugin.js"></script>
     <link href='https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css' rel='stylesheet' />
+    <style>
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        #map {
+            flex: 1 1 800px;
+            min-width: 400px;
+            height: 600px;
+        }
+        #node_list {
+            flex: 0 1 300px;
+            min-width: 250px;
+            height: 600px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+        }
+    </style>
 </head>
 
 <body>
-    <div id='map' style='width: 800px; height: 600px;'></div>
-    <div id="node_list" style='width: 800px; height: 200px; overflow-y: scroll; border: 1px solid #ccc; margin-top: 10px;'></div>
+    <div class="container">
+        <div id='map'></div>
+        <div id="node_list"></div>
+    </div>
     <script src="map.js"></script>
 </body>

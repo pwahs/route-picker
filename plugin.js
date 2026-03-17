@@ -324,10 +324,12 @@ window.PathChooser.loadFromUrl = async function (url, tag) {
     _syncMarkers();
     _syncPaths();
 
-    // Center on the last loaded waypoint
+    // Fit map to show all waypoints
     if (_map && store.waypoints.size > 0) {
-        const last = [...store.waypoints.values()].at(-1);
-        _map.flyTo({ center: last.coords });
+        const allCoords = [...store.waypoints.values()].map(wp => wp.coords);
+        const bounds = new maplibregl.LngLatBounds(allCoords[0], allCoords[0]);
+        for (const c of allCoords) bounds.extend(c);
+        _map.fitBounds(bounds, { padding: 40 });
     }
 
     return store;
@@ -535,21 +537,21 @@ function _updateTourVisuals() {
         if (wpId === lastId) {
             // Last selected node: yellow border, full opacity
             el.style.background = s.background;
-            el.style.border = '2px solid #FFD700';
+            el.style.border = '4px solid #FFD700';
             el.style.cursor = clickableIds.has(wpId) ? 'pointer' : 'default';
             el.style.opacity = '1';
             marker.getElement().style.zIndex = '3';
         } else if (clickableIds.has(wpId)) {
             // Clickable neighbor (may also be in tour): full opacity
             el.style.background = s.background;
-            el.style.border = tourWpSet.has(wpId) ? '2px solid white' : s.border;
+            el.style.border = tourWpSet.has(wpId) ? '4px solid white' : s.border;
             el.style.cursor = 'pointer';
             el.style.opacity = '1';
             marker.getElement().style.zIndex = '2';
         } else {
             // Not clickable: dim (includes tour nodes that aren't last or neighbor)
             el.style.background = s.background;
-            el.style.border = tourWpSet.has(wpId) ? '2px solid white' : s.border;
+            el.style.border = tourWpSet.has(wpId) ? '4px solid white' : s.border;
             el.style.cursor = 'default';
             el.style.opacity = '0.3';
             marker.getElement().style.zIndex = '0';
@@ -620,6 +622,163 @@ function _updateTourVisuals() {
         });
         _tourLayerIds.push(srcId);
     }
+
+    _updateOverlay();
+}
+
+/** Create a small styled badge element for a waypoint, matching its map marker style. */
+function _createWaypointBadge(wp) {
+    const s = _styleFor(wp.tag);
+    const badge = document.createElement('span');
+    badge.style.display = 'inline-flex';
+    badge.style.alignItems = 'center';
+    badge.style.justifyContent = 'center';
+    badge.style.background = s.background;
+    badge.style.border = s.border;
+    badge.style.borderRadius = s.shape === 'circle' ? '50%' : '0';
+    badge.style.width = s.width + 'px';
+    badge.style.height = s.height + 'px';
+    badge.style.color = s.color;
+    badge.style.fontWeight = 'bold';
+    badge.style.fontSize = s.fontSize;
+    badge.style.flexShrink = '0';
+    badge.textContent = wp.label;
+    badge.title = `${wp.label} (${wp.tag})`;
+    return badge;
+}
+
+/** Update the map overlay showing distance, last waypoint, and neighbors. */
+function _updateOverlay() {
+    if (!_map) return;
+    const container = _map.getContainer();
+
+    let overlay = container.querySelector('#pathchooser-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'pathchooser-overlay';
+        overlay.style.position = 'absolute';
+        overlay.style.top = '10px';
+        overlay.style.left = '10px';
+        overlay.style.zIndex = '10';
+        overlay.style.background = 'rgba(255,255,255,0.92)';
+        overlay.style.borderRadius = '6px';
+        overlay.style.padding = '8px 12px';
+        overlay.style.fontSize = '13px';
+        overlay.style.lineHeight = '1.6';
+        overlay.style.boxShadow = '0 1px 4px rgba(0,0,0,0.25)';
+        overlay.style.pointerEvents = 'none';
+        overlay.style.maxWidth = '260px';
+        container.appendChild(overlay);
+    }
+
+    overlay.innerHTML = '';
+    // Enable pointer events only on interactive children
+    overlay.style.pointerEvents = 'none';
+
+    // Total distance
+    let totalDist = 0;
+    for (const pathId of _tourPathIds) {
+        totalDist += _pathLength(store.paths.get(pathId).trackPoints);
+    }
+    const distLine = document.createElement('div');
+    distLine.style.fontWeight = 'bold';
+    distLine.textContent = `Gesamtl\u00e4nge: ${_formatDist(totalDist)}`;
+    overlay.appendChild(distLine);
+
+    // Last waypoint
+    const lastId = _tourWaypointIds[_tourWaypointIds.length - 1] || null;
+    if (lastId) {
+        const lastWp = store.waypoints.get(lastId);
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.gap = '6px';
+        row.style.marginTop = '4px';
+        const lbl = document.createElement('span');
+        lbl.textContent = 'Aktuell:';
+        const badge = _createWaypointBadge(lastWp);
+        badge.style.border = '4px solid #FFD700';
+        row.appendChild(lbl);
+        row.appendChild(badge);
+
+        // "zurück" button — removes the last waypoint
+        if (_tourWaypointIds.length > 1) {
+            const backBtn = document.createElement('button');
+            backBtn.textContent = 'zur\u00fcck';
+            backBtn.style.pointerEvents = 'auto';
+            backBtn.style.cursor = 'pointer';
+            backBtn.style.fontSize = '12px';
+            backBtn.onclick = () => {
+                _trimTourTo(_tourWaypointIds.length - 2);
+                _fitToLastWaypoints();
+            };
+            row.appendChild(backBtn);
+        } else {
+            // Single node — offer to clear the tour
+            const resetBtn = document.createElement('button');
+            resetBtn.textContent = 'Neustart';
+            resetBtn.style.pointerEvents = 'auto';
+            resetBtn.style.cursor = 'pointer';
+            resetBtn.style.fontSize = '12px';
+            resetBtn.onclick = () => {
+                _tourWaypointIds.length = 0;
+                _tourPathIds.length = 0;
+                _updateTourVisuals();
+                _updateNodeList();
+            };
+            row.appendChild(resetBtn);
+        }
+
+        overlay.appendChild(row);
+
+        // Neighbor waypoints
+        const neighbors = store.getNeighbors(lastId);
+        if (neighbors.length > 0) {
+            const nRow = document.createElement('div');
+            nRow.style.marginTop = '4px';
+            const nLbl = document.createElement('div');
+            nLbl.textContent = 'N\u00e4chste:';
+            nRow.appendChild(nLbl);
+            const badges = document.createElement('div');
+            badges.style.display = 'flex';
+            badges.style.flexWrap = 'wrap';
+            badges.style.gap = '4px';
+            badges.style.marginTop = '2px';
+            for (const { neighbor } of neighbors) {
+                const nb = _createWaypointBadge(neighbor);
+                nb.style.cursor = 'pointer';
+                nb.style.pointerEvents = 'auto';
+                nb.addEventListener('click', () => {
+                    _onWaypointClick(neighbor.id);
+                    _fitToLastWaypoints();
+                });
+                badges.appendChild(nb);
+            }
+            nRow.appendChild(badges);
+            overlay.appendChild(nRow);
+        }
+    } else {
+        const hint = document.createElement('div');
+        hint.style.color = '#666';
+        hint.textContent = 'Klicke einen Wegpunkt zum Starten';
+        overlay.appendChild(hint);
+    }
+}
+
+/** Fit the map so the last N tour waypoints (default 4) are all visible. */
+function _fitToLastWaypoints(n) {
+    if (!_map || _tourWaypointIds.length === 0) return;
+    n = n || 4;
+    const ids = _tourWaypointIds.slice(-n);
+    const coords = ids.map(id => store.waypoints.get(id).coords);
+    const bounds = new maplibregl.LngLatBounds(coords[0], coords[0]);
+    for (const c of coords) bounds.extend(c);
+    // Only move/zoom if any point is outside the current view
+    const mapBounds = _map.getBounds();
+    const allVisible = coords.every(c => mapBounds.contains(c));
+    if (!allVisible) {
+        _map.fitBounds(bounds, { padding: 80, maxZoom: _map.getZoom() });
+    }
 }
 
 /** Update the #node_list div with the current tour waypoints. */
@@ -639,13 +798,37 @@ function _updateNodeList() {
         div.style.alignItems = 'center';
 
         const label = document.createElement('span');
-        label.textContent = `${index + 1}. ${wp.label} (${wp.tag})`;
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.gap = '6px';
+
+        const numSpan = document.createElement('span');
+        numSpan.textContent = `${index + 1}.`;
+        label.appendChild(numSpan);
+
+        const badge = _createWaypointBadge(wp);
+        badge.style.cursor = 'pointer';
+        badge.addEventListener('click', () => {
+            if (!_map) return;
+            _map.flyTo({ center: wp.coords, speed: 1.2 });
+            // Bring the corresponding map marker to front and full opacity
+            for (const m of _markers) {
+                if (m._waypointId === wpId) {
+                    m._innerElement.style.opacity = '1';
+                    m.getElement().style.zIndex = '10';
+                } else if (m.getElement().style.zIndex === '10') {
+                    // Reset any previously highlighted marker
+                    m.getElement().style.zIndex = '';
+                }
+            }
+        });
+        label.appendChild(badge);
 
         const buttonContainer = document.createElement('div');
 
         // "Remove from here" button: trims tour back to this node
         const deleteBtn = document.createElement('button');
-        deleteBtn.textContent = index === 0 ? 'Clear all' : 'Remove';
+        deleteBtn.textContent = index === 0 ? 'Alles löschen' : 'Ab hier löschen';
         deleteBtn.onclick = () => {
             if (index === 0) {
                 _tourWaypointIds.length = 0;
@@ -663,4 +846,172 @@ function _updateNodeList() {
         div.appendChild(buttonContainer);
         nodeList.appendChild(div);
     });
+
+    // "Reverse" button: reverse the entire tour order
+    if (_tourWaypointIds.length >= 2) {
+        const reverseBtn = document.createElement('button');
+        reverseBtn.textContent = 'Route umkehren';
+        reverseBtn.style.margin = '8px 5px';
+        reverseBtn.onclick = () => {
+            _tourWaypointIds.reverse();
+            _tourPathIds.reverse();
+            _updateTourVisuals();
+            _updateNodeList();
+        };
+        nodeList.appendChild(reverseBtn);
+    }
+
+    // Distance summary
+    if (_tourPathIds.length > 0) {
+        const distByTag = new Map();
+        let totalDist = 0;
+        for (const pathId of _tourPathIds) {
+            const path = store.paths.get(pathId);
+            const d = _pathLength(path.trackPoints);
+            totalDist += d;
+            distByTag.set(path.tag, (distByTag.get(path.tag) || 0) + d);
+        }
+
+        const summary = document.createElement('div');
+        summary.style.padding = '8px 5px';
+        summary.style.fontWeight = 'bold';
+        summary.textContent = `Gesamtlänge: ${_formatDist(totalDist)}`;
+
+        if (distByTag.size > 1) {
+            for (const [tag, dist] of distByTag) {
+                const line = document.createElement('div');
+                line.style.padding = '2px 5px';
+                line.style.fontWeight = 'normal';
+                line.style.fontStyle = 'italic';
+                line.textContent = `  ${tag}: ${_formatDist(dist)}`;
+                summary.appendChild(line);
+            }
+        }
+
+        nodeList.appendChild(summary);
+    }
+
+    // Routenvorschau checkbox
+    if (_tourWaypointIds.length >= 2) {
+        const previewRow = document.createElement('div');
+        previewRow.style.display = 'flex';
+        previewRow.style.alignItems = 'center';
+        previewRow.style.gap = '8px';
+        previewRow.style.margin = '8px 5px';
+        const previewLabel = document.createElement('label');
+        previewLabel.textContent = 'Routenvorschau';
+        const previewCheckbox = document.createElement('input');
+        previewCheckbox.type = 'checkbox';
+        previewCheckbox.checked = window._previewMode || false;
+        previewCheckbox.style.pointerEvents = 'auto';
+        previewCheckbox.style.cursor = 'pointer';
+        previewCheckbox.onchange = () => {
+            window._previewMode = previewCheckbox.checked;
+        };
+        previewRow.appendChild(previewCheckbox);
+        previewRow.appendChild(previewLabel);
+        nodeList.appendChild(previewRow);
+
+        // Download GPX button
+        const dlBtn = document.createElement('button');
+        dlBtn.textContent = 'GPX herunterladen';
+        dlBtn.style.margin = '8px 5px';
+        dlBtn.onclick = () => _downloadGpx();
+        nodeList.appendChild(dlBtn);
+    }
+}
+
+/** Compute the total length of a polyline (array of [lng, lat]) in metres. */
+function _pathLength(trackPoints) {
+    let total = 0;
+    for (let i = 1; i < trackPoints.length; i++) {
+        total += distanceMeters(trackPoints[i - 1], trackPoints[i]);
+    }
+    return total;
+}
+
+/** Format a distance in metres as a human-readable string. */
+function _formatDist(meters) {
+    return meters >= 1000
+        ? (meters / 1000).toFixed(2) + ' km'
+        : Math.round(meters) + ' m';
+}
+
+/** Build a GPX XML string from the current tour and trigger a download. */
+function _downloadGpx() {
+    if (_tourWaypointIds.length < 2) return;
+
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+    // Collect correctly oriented track points
+    const allPoints = [];
+    for (let i = 0; i < _tourPathIds.length; i++) {
+        const fromWpId = _tourWaypointIds[i];
+        const path = store.paths.get(_tourPathIds[i]);
+        let pts = path.trackPoints;
+        if (path.startWaypointId !== fromWpId) {
+            pts = [...pts].reverse();
+        }
+        // Avoid duplicating the junction point between consecutive segments
+        if (i > 0 && allPoints.length > 0) {
+            const last = allPoints[allPoints.length - 1];
+            if (pts[0][0] === last[0] && pts[0][1] === last[1]) {
+                pts = pts.slice(1);
+            }
+        }
+        allPoints.push(...pts);
+    }
+
+    const firstWp = store.waypoints.get(_tourWaypointIds[0]);
+    const lastWp = store.waypoints.get(_tourWaypointIds[_tourWaypointIds.length - 1]);
+    const trackName = `Route von ${firstWp.label} nach ${lastWp.label}`;
+
+    // Compute total distance
+    let totalDist = 0;
+    for (const pathId of _tourPathIds) {
+        totalDist += _pathLength(store.paths.get(pathId).trackPoints);
+    }
+
+    let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+    gpx += `<gpx version="1.1" creator="PathChooser"\n`;
+    gpx += `     xmlns="http://www.topografix.com/GPX/1/1">\n`;
+    gpx += `  <metadata>\n`;
+    gpx += `    <name>${esc(trackName)}</name>\n`;
+    gpx += `    <desc>${esc(_tourWaypointIds.length + ' Wegpunkte, ' + _formatDist(totalDist))}</desc>\n`;
+    gpx += `    <time>${new Date().toISOString()}</time>\n`;
+    gpx += `  </metadata>\n`;
+
+    // Labeled waypoints for each tour stop
+    _tourWaypointIds.forEach((wpId, i) => {
+        const wp = store.waypoints.get(wpId);
+        gpx += `  <wpt lat="${wp.coords[1]}" lon="${wp.coords[0]}">\n`;
+        gpx += `    <name>${esc(wp.label)}</name>\n`;
+        gpx += `    <desc>${esc(wp.tag)}</desc>\n`;
+        gpx += `    <type>${esc(wp.tag)}</type>\n`;
+        gpx += `    <cmt>Stop ${i + 1} von ${_tourWaypointIds.length}</cmt>\n`;
+        gpx += `  </wpt>\n`;
+    });
+
+    // Single continuous track
+    gpx += `  <trk>\n`;
+    gpx += `    <name>${esc(trackName)}</name>\n`;
+    gpx += `    <desc>${esc(_formatDist(totalDist))}</desc>\n`;
+    gpx += `    <trkseg>\n`;
+    for (const [lng, lat] of allPoints) {
+        gpx += `      <trkpt lat="${lat}" lon="${lng}"></trkpt>\n`;
+    }
+    gpx += `    </trkseg>\n`;
+    gpx += `  </trk>\n`;
+    gpx += `</gpx>\n`;
+
+    // Trigger download
+    const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = trackName.replace(/[^a-zA-Z0-9_\-\u00C0-\u024F ]/g, '') + '.gpx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
