@@ -6,4 +6,5 @@ Route Picker is an open source web tool for interactively selecting, previewing,
 - Preview and edit your route
 - Download your route as a GPX file
 
-A live demo will be available soon on GitHub Pages (URL tbd).
+A live demo is available here:
+https://pwahs.github.io/route-picker/
