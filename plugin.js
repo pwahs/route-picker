@@ -280,12 +280,14 @@ function _syncPaths() {
             };
         if (s.lineDasharray) paint['line-dasharray'] = s.lineDasharray;
 
-        _map.addLayer({
-            id: sourceId,
-            type: 'line',
-            source: sourceId,
-            paint,
-        });
+        if (!window._previewMode) {
+            _map.addLayer({
+                id: sourceId,
+                type: 'line',
+                source: sourceId,
+                paint,
+            });
+        }
 
         _pathLayerIds.push(sourceId);
     }
@@ -510,6 +512,7 @@ function _updateTourVisuals() {
     if (!_map) return;
 
     // Determine which waypoints are clickable
+    const firstId = _tourWaypointIds[0] || null;
     const lastId = _tourWaypointIds[_tourWaypointIds.length - 1] || null;
     const clickableIds = new Set();
     const candidatePathIds = new Set();
@@ -529,6 +532,7 @@ function _updateTourVisuals() {
 
     // Update marker appearances
     for (const marker of _markers) {
+        console.log("Updating marker for waypoint " + marker._waypointId, " previewMode=" + window._previewMode);
         const wpId = marker._waypointId;
         const el = marker._innerElement;
         const wp = store.waypoints.get(wpId);
@@ -537,10 +541,27 @@ function _updateTourVisuals() {
         if (wpId === lastId) {
             // Last selected node: yellow border, full opacity
             el.style.background = s.background;
-            el.style.border = '4px solid #FFD700';
+            el.style.border = window._previewMode ? '4px solid #000000': '4px solid #FFD700';
             el.style.cursor = clickableIds.has(wpId) ? 'pointer' : 'default';
             el.style.opacity = '1';
             marker.getElement().style.zIndex = '3';
+        } else if (window._previewMode) {
+            if (wpId == firstId) {
+                console.log("Preview mode: highlighting first node " + wpId);
+                el.style.background = s.background;
+                el.style.border = '4px solid #000000';
+                el.style.cursor = 'default';
+                el.style.opacity = '1';
+                marker.getElement().style.zIndex = '3';
+            } else if (_tourWaypointIds.includes(wpId)) {
+                el.style.background = s.background;
+                el.style.border = 'none';
+                el.style.cursor = 'default';
+                el.style.opacity = '1';
+                marker.getElement().style.zIndex = '2';
+            } else {
+                el.style.opacity = '0';
+            }
         } else if (clickableIds.has(wpId)) {
             // Clickable neighbor (may also be in tour): full opacity
             el.style.background = s.background;
@@ -605,22 +626,24 @@ function _updateTourVisuals() {
         }
     }
 
-    // Draw candidate paths (reachable from last node) — dashed highlight, on top
-    let candidateIdx = 0;
-    for (const pathId of candidatePathIds) {
-        const path = store.paths.get(pathId);
-        const srcId = 'pathchooser-candidate-' + (candidateIdx++) + '-' + pathId;
-        _map.addSource(srcId, {
-            type: 'geojson',
-            data: { type: 'Feature', geometry: { type: 'LineString', coordinates: path.trackPoints } },
-        });
-        _map.addLayer({
-            id: srcId,
-            type: 'line',
-            source: srcId,
-            paint: { 'line-color': '#FFD700', 'line-width': 2 },
-        });
-        _tourLayerIds.push(srcId);
+    if (!window._previewMode) {
+        // Draw candidate paths (reachable from last node) on top
+        let candidateIdx = 0;
+        for (const pathId of candidatePathIds) {
+            const path = store.paths.get(pathId);
+            const srcId = 'pathchooser-candidate-' + (candidateIdx++) + '-' + pathId;
+            _map.addSource(srcId, {
+                type: 'geojson',
+                data: { type: 'Feature', geometry: { type: 'LineString', coordinates: path.trackPoints } },
+            });
+            _map.addLayer({
+                id: srcId,
+                type: 'line',
+                source: srcId,
+                paint: { 'line-color': '#FFD700', 'line-width': 2 },
+            });
+            _tourLayerIds.push(srcId);
+        }
     }
 
     _updateOverlay();
@@ -907,6 +930,8 @@ function _updateNodeList() {
         previewCheckbox.style.cursor = 'pointer';
         previewCheckbox.onchange = () => {
             window._previewMode = previewCheckbox.checked;
+            _syncPaths();
+            _updateTourVisuals();
         };
         previewRow.appendChild(previewCheckbox);
         previewRow.appendChild(previewLabel);
