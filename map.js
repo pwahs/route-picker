@@ -47,7 +47,7 @@ async function initializeMap() {
         opacity: 1,
     };
     PathChooser.lineStyles.candidate = {
-        color: '#CCCC00',
+        color: '#FF0000',
         width: 2,
         opacity: 1,
     };

@@ -2,7 +2,51 @@
 window.PathChooser = window.PathChooser || {};
 
 // ── Configuration ──────────────────────────────────────────────────
-const MATCH_THRESHOLD_METERS = 50;
+/**
+ * User-customizable configuration. Set before calling loadFromUrl().
+ * @type {Object<string, any>}
+ */
+window.PathChooser.config = window.PathChooser.config || {
+    matchThresholdMeters: 50,
+    maxDistanceCacheSize: 10000,
+};
+
+/**
+ * Localization strings. Override per-language as needed.
+ * @type {Object<string, string>}
+ */
+window.PathChooser.i18n = window.PathChooser.i18n || {
+    currentWaypoint: 'Aktuell:',
+    nextWaypoints: 'Nächste:',
+    back: 'zurück',
+    reset: 'Neustart',
+    deleteAll: 'Alles löschen',
+    deleteFrom: 'Ab hier löschen',
+    reverse: 'Route umkehren',
+    preview: 'Routenvorschau',
+    download: 'GPX herunterladen',
+    startHint: 'Klicke einen Wegpunkt zum Starten',
+    routeFrom: 'Route von {from} nach {to}',
+    waypointsDistance: '{count} Wegpunkte, {distance}',
+    totalDistance: 'Gesamtlänge:',
+};
+
+// ── Internal state ──────────────────────────────────────────────────
+const _internal = {
+    map: null,
+    styleLoadHandler: null,
+    markers: [],
+    pathLayerIds: [],
+    tourWaypointIds: [],
+    tourPathIds: [],
+    tourLayerIds: [],
+    previewMode: false,
+    nextWaypointId: 1,
+    nextPathId: 1,
+    unofficialCounter: 1,
+    distanceCacheOrder: [],
+    addedEventListeners: [],
+};
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -21,14 +65,37 @@ function distanceMeters(a, b) {
     const h =
         sinLat * sinLat +
         Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * sinLng * sinLng;
-    const result = 2 * R * Math.asin(Math.sqrt(h))
-    distanceCache.set(key, result);
+    const result = 2 * R * Math.asin(Math.sqrt(h));
+    _cacheDistance(key, result);
     return result;
 }
 
-let _nextWaypointId = 1;
-let _nextPathId = 1;
-let _unofficialCounter = 1;
+/** Add entry to LRU-limited distance cache. */
+function _cacheDistance(key, result) {
+    const cfg = window.PathChooser.config;
+    const maxSize = cfg.maxDistanceCacheSize || 10000;
+    if (distanceCache.size >= maxSize) {
+        const oldest = _internal.distanceCacheOrder.shift();
+        if (oldest) distanceCache.delete(oldest);
+    }
+    distanceCache.set(key, result);
+    _internal.distanceCacheOrder.push(key);
+}
+
+/** Store event listener reference for cleanup. */
+function _addEventListener(element, event, handler) {
+    element.addEventListener(event, handler);
+    _internal.addedEventListeners.push({ element, event, handler });
+}
+
+/** Remove tracked listeners for elements no longer connected to the DOM. */
+function _cleanupDetachedEventListeners() {
+    _internal.addedEventListeners = _internal.addedEventListeners.filter(({ element, event, handler }) => {
+        if (element && element.isConnected) return true;
+        if (element) element.removeEventListener(event, handler);
+        return false;
+    });
+}
 
 // ── Data structures ────────────────────────────────────────────────
 
@@ -78,7 +145,7 @@ class PathChooserStore {
      * @returns {Waypoint} the created waypoint
      */
     addWaypoint(label, tag, coords) {
-        const id = 'w' + _nextWaypointId++;
+        const id = 'w' + _internal.nextWaypointId++;
         const waypoint = { id, label, tag, coords };
         this.waypoints.set(id, waypoint);
         this.adjacency.set(id, []);
@@ -100,7 +167,7 @@ class PathChooserStore {
                 best = wp;
             }
         }
-        return bestDist <= MATCH_THRESHOLD_METERS ? best : null;
+        return bestDist <= window.PathChooser.config.matchThresholdMeters ? best : null;
     }
 
     /**
@@ -111,8 +178,8 @@ class PathChooserStore {
     resolveWaypoint(coords) {
         const existing = this.findNearestWaypoint(coords);
         if (existing) return existing;
-        console.log("New unofficial waypoint U", _unofficialCounter, " created at " + coords[0] + "°N " + coords[1] + "°E");
-        return this.addWaypoint('U' + _unofficialCounter++, 'unofficial', coords);
+        console.log("New unofficial waypoint U", _internal.unofficialCounter, " created at " + coords[0] + "°N " + coords[1] + "°E");
+        return this.addWaypoint('U' + _internal.unofficialCounter++, 'unofficial', coords);
     }
 
     // ── Paths ──────────────────────────────────────────────────────
@@ -127,7 +194,7 @@ class PathChooserStore {
      * @returns {Path}
      */
     addPath(startWaypointId, endWaypointId, tag, trackPoints, source) {
-        const id = 'p' + _nextPathId++;
+        const id = 'p' + _internal.nextPathId++;
         const path = { id, startWaypointId, endWaypointId, tag, trackPoints, source };
         this.paths.set(id, path);
 
@@ -156,12 +223,6 @@ class PathChooserStore {
 // ── Singleton store ────────────────────────────────────────────────
 const store = new PathChooserStore();
 window.PathChooser.store = store;
-// ── Map + markers ───────────────────────────────────────────────────
-let _map = null;
-/** @type {maplibregl.Marker[]} */
-const _markers = [];
-/** @type {string[]} Track layer/source IDs added to the map */
-const _pathLayerIds = [];
 
 /**
  * Per-tag waypoint styles.  Users set entries on this object before loading.
@@ -267,13 +328,22 @@ window.PathChooser.lineStyles = {
  * @param {maplibregl.Map} map
  */
 window.PathChooser.setMap = function (map) {
-    _map = map;
+    if (_internal.map && _internal.styleLoadHandler) {
+        _internal.map.off('style.load', _internal.styleLoadHandler);
+    }
+
+    _internal.map = map;
+
+    if (!_internal.styleLoadHandler) {
+        _internal.styleLoadHandler = () => {
+            _internal.pathLayerIds.length = 0;
+            _internal.tourLayerIds.length = 0;
+            _syncPaths();
+        };
+    }
+
     // After a full style reload, all custom layers/sources are gone — re-add them
-    _map.on('style.load', () => {
-        _pathLayerIds.length = 0;
-        _tourLayerIds.length = 0;
-        _syncPaths();
-    });
+    map.on('style.load', _internal.styleLoadHandler);
 };
 
 // Add a style cache
@@ -298,13 +368,24 @@ function _lineStyleFor(group) {
     return { ...d, ...s };
 }
 
+/** Resolve localized UI text with optional token replacements. */
+function _t(key, vars = null) {
+    let text = window.PathChooser.i18n[key] || '';
+    if (!vars) return text;
+    for (const [name, value] of Object.entries(vars)) {
+        text = text.replaceAll(`{${name}}`, String(value));
+    }
+    return text;
+}
+
 /** (Re-)create markers for every waypoint currently in the store. */
 function _syncMarkers() {
-    if (!_map) return;
+    if (!_internal.map) return;
+    _cleanupDetachedEventListeners();
 
     // Remove old markers
-    for (const m of _markers) m.remove();
-    _markers.length = 0;
+    for (const m of _internal.markers) m.remove();
+    _internal.markers.length = 0;
 
     for (const wp of store.waypoints.values()) {
         const s = _styleFor(wp.tag);
@@ -334,14 +415,14 @@ function _syncMarkers() {
         el.title = `${wp.label} (${wp.tag})`;
         container.appendChild(el);
 
-        container.addEventListener('click', () => _onWaypointClick(wp.id));
+        _addEventListener(container, 'click', () => _onWaypointClick(wp.id));
 
         const marker = new maplibregl.Marker({ element: container })
             .setLngLat(wp.coords)
-            .addTo(_map);
+            .addTo(_internal.map);
         marker._waypointId = wp.id;
         marker._innerElement = el;
-        _markers.push(marker);
+        _internal.markers.push(marker);
     }
 
     _updateTourVisuals();
@@ -349,21 +430,21 @@ function _syncMarkers() {
 
 /** (Re-)render all paths on the map as line layers. */
 function _syncPaths() {
-    if (!_map) return;
+    if (!_internal.map) return;
 
     // Remove old path layers/sources
-    for (const id of _pathLayerIds) {
-        if (_map.getLayer(id)) _map.removeLayer(id);
-        if (_map.getSource(id)) _map.removeSource(id);
+    for (const id of _internal.pathLayerIds) {
+        if (_internal.map.getLayer(id)) _internal.map.removeLayer(id);
+        if (_internal.map.getSource(id)) _internal.map.removeSource(id);
     }
-    _pathLayerIds.length = 0;
+    _internal.pathLayerIds.length = 0;
 
     for (const path of store.paths.values()) {
         const s = _styleFor(path.tag);
         const baseLineStyle = _lineStyleFor('basePath');
         const sourceId = 'pathchooser-path-' + path.id;
 
-        _map.addSource(sourceId, {
+        _internal.map.addSource(sourceId, {
             type: 'geojson',
             data: {
                 type: 'Feature',
@@ -379,8 +460,8 @@ function _syncPaths() {
         const lineDasharray = s.lineDasharray || baseLineStyle.dasharray;
         if (lineDasharray) paint['line-dasharray'] = lineDasharray;
 
-        if (!window._previewMode) {
-            _map.addLayer({
+        if (!_internal.previewMode) {
+            _internal.map.addLayer({
                 id: sourceId,
                 type: 'line',
                 source: sourceId,
@@ -388,7 +469,7 @@ function _syncPaths() {
             });
         }
 
-        _pathLayerIds.push(sourceId);
+        _internal.pathLayerIds.push(sourceId);
     }
 
     _updateTourVisuals();
@@ -410,27 +491,30 @@ function _syncPaths() {
  * @returns {Promise<PathChooserStore>}
  */
 window.PathChooser.loadFromUrl = async function (url, tag) {
-    console.log(`[PathChooser] loadFromUrl called with: ${url}` + (tag ? ` tag=${tag}` : ''));
+    try {
+        const ext = url.toLowerCase().split('.').pop();
+        if (ext === 'xlsx') {
+            await loadFromXlsx(url);
+        } else if (ext === 'gpx') {
+            await loadFromGpx(url, tag || 'default');
+        }
 
-    const ext = url.toLowerCase().split('.').pop();
-    if (ext === 'xlsx') {
-        await loadFromXlsx(url);
-    } else if (ext === 'gpx') {
-        await loadFromGpx(url, tag || 'default');
+        _syncMarkers();
+        _syncPaths();
+
+        // Fit map to show all waypoints
+        if (_internal.map && store.waypoints.size > 0) {
+            const allCoords = [...store.waypoints.values()].map(wp => wp.coords);
+            const bounds = new maplibregl.LngLatBounds(allCoords[0], allCoords[0]);
+            for (const c of allCoords) bounds.extend(c);
+            _internal.map.fitBounds(bounds, { padding: 40 });
+        }
+
+        return store;
+    } catch (error) {
+        console.error(`[PathChooser] Failed to load from URL ${url}:`, error);
+        throw error;
     }
-
-    _syncMarkers();
-    _syncPaths();
-
-    // Fit map to show all waypoints
-    if (_map && store.waypoints.size > 0) {
-        const allCoords = [...store.waypoints.values()].map(wp => wp.coords);
-        const bounds = new maplibregl.LngLatBounds(allCoords[0], allCoords[0]);
-        for (const c of allCoords) bounds.extend(c);
-        _map.fitBounds(bounds, { padding: 40 });
-    }
-
-    return store;
 };
 
 /**
@@ -447,59 +531,60 @@ window.PathChooser.loadFromUrl = async function (url, tag) {
  * @returns {Promise<void>}
  */
 async function loadFromXlsx(url) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`[PathChooser] Failed to fetch ${url}: ${response.status}`);
-    const arrayBuffer = await response.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`[PathChooser] Failed to fetch ${url}: ${response.status}`);
+        const arrayBuffer = await response.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
-    for (const sheetName of workbook.SheetNames) {
-        const tag = sheetName;
-        const sheet = workbook.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+        for (const sheetName of workbook.SheetNames) {
+            const tag = sheetName;
+            const sheet = workbook.Sheets[sheetName];
+            const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
 
-        // Find the row and column of the "Knotenpunkte" header cell
-        let headerRow = -1;
-        let headerCol = -1;
-        outer: for (let r = 0; r < rows.length; r++) {
-            for (let c = 0; c < rows[r].length; c++) {
-                if (typeof rows[r][c] === 'string' && rows[r][c].trim() === 'Knotenpunkte') {
-                    headerRow = r;
-                    headerCol = c;
-                    break outer;
+            // Find the row and column of the "Knotenpunkte" header cell
+            let headerRow = -1;
+            let headerCol = -1;
+            outer: for (let r = 0; r < rows.length; r++) {
+                for (let c = 0; c < rows[r].length; c++) {
+                    if (typeof rows[r][c] === 'string' && rows[r][c].trim() === 'Knotenpunkte') {
+                        headerRow = r;
+                        headerCol = c;
+                        break outer;
+                    }
                 }
             }
-        }
 
-        if (headerRow === -1) {
-            console.warn(`[PathChooser] No "Knotenpunkte" cell found in sheet "${sheetName}", skipping.`);
-            continue;
-        }
-
-        // Rows below the header: label | lat | lngW
-        for (let r = headerRow + 1; r < rows.length; r++) {
-            const row = rows[r];
-            const label = row[headerCol];
-            const latStr = row[headerCol + 1];
-            const lngStr = row[headerCol + 2];
-
-            if (!label || !latStr || !lngStr) continue;
-
-            const lat = parseCoordinate(latStr);
-            const lng = parseCoordinate(lngStr);
-
-            if (lat === null || lng === null) {
-                console.warn(`[PathChooser] Could not parse coordinates for "${label}" in sheet "${sheetName}": ${latStr}, ${lngStr}`);
+            if (headerRow === -1) {
                 continue;
             }
 
-            let labelStr = String(label).trim();
-            if (/^\d$/.test(labelStr)) labelStr = '0' + labelStr;
+            // Rows below the header: label | lat | lngW
+            for (let r = headerRow + 1; r < rows.length; r++) {
+                const row = rows[r];
+                const label = row[headerCol];
+                const latStr = row[headerCol + 1];
+                const lngStr = row[headerCol + 2];
 
-            const wp = store.addWaypoint(labelStr, tag, [lng, lat]);
+                if (!label || !latStr || !lngStr) continue;
+
+                const lat = parseCoordinate(latStr);
+                const lng = parseCoordinate(lngStr);
+
+                if (lat === null || lng === null) {
+                    continue;
+                }
+
+                let labelStr = String(label).trim();
+                if (/^\d$/.test(labelStr)) labelStr = '0' + labelStr;
+
+                store.addWaypoint(labelStr, tag, [lng, lat]);
+            }
         }
+    } catch (error) {
+        console.error(`[PathChooser] Failed to load XLSX ${url}:`, error);
+        throw error;
     }
-
-    console.log(`[PathChooser] Done loading xlsx. Total waypoints: ${store.waypoints.size}`);
 }
 
 /**
@@ -514,42 +599,42 @@ async function loadFromXlsx(url) {
  * @returns {Promise<void>}
  */
 async function loadFromGpx(url, tag) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`[PathChooser] Failed to fetch ${url}: ${response.status}`);
-    const text = await response.text();
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(text, 'application/xml');
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`[PathChooser] Failed to fetch ${url}: ${response.status}`);
+        const text = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'application/xml');
 
-    // Handle both namespaced (GPX 1.1) and non-namespaced (GPX 1.0) files
-    const tracks = doc.getElementsByTagName('trk');
+        // Handle both namespaced (GPX 1.1) and non-namespaced (GPX 1.0) files
+        const tracks = doc.getElementsByTagName('trk');
 
-    for (const trk of tracks) {
-        const nameEl = trk.getElementsByTagName('name')[0];
-        const trackName = nameEl ? nameEl.textContent.trim() : url;
+        for (const trk of tracks) {
+            const nameEl = trk.getElementsByTagName('name')[0];
+            const trackName = nameEl ? nameEl.textContent.trim() : url;
 
-        const points = [];
-        const trkpts = trk.getElementsByTagName('trkpt');
-        for (const pt of trkpts) {
-            const lat = parseFloat(pt.getAttribute('lat'));
-            const lon = parseFloat(pt.getAttribute('lon'));
-            if (!isNaN(lat) && !isNaN(lon)) {
-                points.push([lon, lat]);
+            const points = [];
+            const trkpts = trk.getElementsByTagName('trkpt');
+            for (const pt of trkpts) {
+                const lat = parseFloat(pt.getAttribute('lat'));
+                const lon = parseFloat(pt.getAttribute('lon'));
+                if (!isNaN(lat) && !isNaN(lon)) {
+                    points.push([lon, lat]);
+                }
             }
-        }
 
-        if (points.length < 2) {
-            console.warn(`[PathChooser] Track "${trackName}" has fewer than 2 points, skipping.`);
-            continue;
-        }
+            if (points.length < 2) {
+                continue;
+            }
 
-        const startWp = store.resolveWaypoint(points[0]);
-        // if (startWp.tag === 'unofficial') console.warn(`[PathChooser] Track "${trackName}": created unofficial waypoint "${startWp.label}" at start`);
-        const endWp = store.resolveWaypoint(points[points.length - 1]);
-        // if (endWp.tag === 'unofficial') console.warn(`[PathChooser] Track "${trackName}": created unofficial waypoint "${endWp.label}" at end`);
-        const path = store.addPath(startWp.id, endWp.id, tag, points, trackName);
+            const startWp = store.resolveWaypoint(points[0]);
+            const endWp = store.resolveWaypoint(points[points.length - 1]);
+            store.addPath(startWp.id, endWp.id, tag, points, trackName);
+        }
+    } catch (error) {
+        console.error(`[PathChooser] Failed to load GPX ${url}:`, error);
+        throw error;
     }
-
-    console.log(`[PathChooser] Done loading GPX. Total paths: ${store.paths.size}`);
 }
 
 /**
@@ -570,26 +655,19 @@ function parseCoordinate(value) {
 
 // ── Tour selection ─────────────────────────────────────────────────
 
-/** @type {string[]} Ordered list of selected waypoint IDs */
-const _tourWaypointIds = [];
-/** @type {string[]} Path IDs connecting consecutive tour waypoints */
-const _tourPathIds = [];
-/** @type {string[]} Map layer IDs for tour highlight and candidate highlight */
-const _tourLayerIds = [];
-
 /** Handle a waypoint click. */
 function _onWaypointClick(waypointId) {
     // If tour is empty, any waypoint is valid
-    if (_tourWaypointIds.length === 0) {
-        _tourWaypointIds.push(waypointId);
+    if (_internal.tourWaypointIds.length === 0) {
+        _internal.tourWaypointIds.push(waypointId);
     } else {
-        const lastId = _tourWaypointIds[_tourWaypointIds.length - 1];
+        const lastId = _internal.tourWaypointIds[_internal.tourWaypointIds.length - 1];
         // Only allow clicking a neighbor of the last node
         const neighbors = store.getNeighbors(lastId);
         const edge = neighbors.find(n => n.neighbor.id === waypointId);
         if (!edge) return; // not a valid neighbor, ignore
-        _tourWaypointIds.push(waypointId);
-        _tourPathIds.push(edge.path.id);
+        _internal.tourWaypointIds.push(waypointId);
+        _internal.tourPathIds.push(edge.path.id);
     }
     _updateTourVisuals();
     _updateNodeList();
@@ -597,19 +675,19 @@ function _onWaypointClick(waypointId) {
 
 /** Remove the tour from the given index onward and update display. */
 function _trimTourTo(index) {
-    _tourWaypointIds.length = index + 1;
-    _tourPathIds.length = index;
+    _internal.tourWaypointIds.length = index + 1;
+    _internal.tourPathIds.length = index;
     _updateTourVisuals();
     _updateNodeList();
 }
 
 /** Update marker styles and map layers to reflect current tour state. */
 function _updateTourVisuals() {
-    if (!_map) return;
+    if (!_internal.map) return;
 
     // Determine which waypoints are clickable
-    const firstId = _tourWaypointIds[0] || null;
-    const lastId = _tourWaypointIds[_tourWaypointIds.length - 1] || null;
+    const firstId = _internal.tourWaypointIds[0] || null;
+    const lastId = _internal.tourWaypointIds[_internal.tourWaypointIds.length - 1] || null;
     const clickableIds = new Set();
     const candidatePathIds = new Set();
 
@@ -624,12 +702,11 @@ function _updateTourVisuals() {
         }
     }
 
-    const tourWpSet = new Set(_tourWaypointIds);
+    const tourWpSet = new Set(_internal.tourWaypointIds);
 
     requestAnimationFrame(() => {
         // Update marker appearances
-        for (const marker of _markers) {
-            // console.log("Updating marker for waypoint " + marker._waypointId, " previewMode=" + window._previewMode);
+        for (const marker of _internal.markers) {
             const wpId = marker._waypointId;
             const el = marker._innerElement;
             const wp = store.waypoints.get(wpId);
@@ -638,19 +715,18 @@ function _updateTourVisuals() {
             if (wpId === lastId) {
                 // Last selected node: yellow border, full opacity
                 el.style.background = s.background;
-                el.style.border = window._previewMode ? '4px solid #000000': '4px solid #FFD700';
+                el.style.border = _internal.previewMode ? '4px solid #000000': '4px solid #FFD700';
                 el.style.cursor = clickableIds.has(wpId) ? 'pointer' : 'default';
                 el.style.opacity = '1';
                 marker.getElement().style.zIndex = '3';
-            } else if (window._previewMode) {
-                if (wpId == firstId) {
-                    console.log("Preview mode: highlighting first node " + wpId);
+            } else if (_internal.previewMode) {
+                if (wpId === firstId) {
                     el.style.background = s.background;
                     el.style.border = '4px solid #000000';
                     el.style.cursor = 'default';
                     el.style.opacity = '1';
                     marker.getElement().style.zIndex = '3';
-                } else if (_tourWaypointIds.includes(wpId)) {
+                } else if (_internal.tourWaypointIds.includes(wpId)) {
                     el.style.background = s.background;
                     el.style.border = 'none';
                     el.style.cursor = 'default';
@@ -678,15 +754,15 @@ function _updateTourVisuals() {
     });
 
     // Remove old tour/candidate layers
-    for (const id of _tourLayerIds) {
-        if (_map.getLayer(id)) _map.removeLayer(id);
-        if (_map.getSource(id)) _map.removeSource(id);
+    for (const id of _internal.tourLayerIds) {
+        if (_internal.map.getLayer(id)) _internal.map.removeLayer(id);
+        if (_internal.map.getSource(id)) _internal.map.removeSource(id);
     }
-    _tourLayerIds.length = 0;
+    _internal.tourLayerIds.length = 0;
 
     // Draw selected tour path — concentric green/black layers for repeated paths
     const tourPathCounts = new Map();
-    for (const pathId of _tourPathIds) {
+    for (const pathId of _internal.tourPathIds) {
         tourPathCounts.set(pathId, (tourPathCounts.get(pathId) || 0) + 1);
     }
     const tourSingleStyle = _lineStyleFor('tourSingle');
@@ -702,18 +778,18 @@ function _updateTourVisuals() {
         if (count === 1) {
             // Single use: one green layer
             const srcId = 'pathchooser-tour-' + (tourIdx++) + '-' + pathId;
-            _map.addSource(srcId, { type: 'geojson', data: geojson });
+            _internal.map.addSource(srcId, { type: 'geojson', data: geojson });
             const paint = {
                 'line-color': tourSingleStyle.color || '#00CC00',
                 'line-width': tourSingleStyle.width ?? 6,
                 'line-opacity': tourSingleStyle.opacity ?? 1,
             };
             if (tourSingleStyle.dasharray) paint['line-dasharray'] = tourSingleStyle.dasharray;
-            _map.addLayer({
+            _internal.map.addLayer({
                 id: srcId, type: 'line', source: srcId,
                 paint,
             });
-            _tourLayerIds.push(srcId);
+            _internal.tourLayerIds.push(srcId);
         } else {
             // Multiple uses: concentric layers (green/black/green/...)
             // 5px green bands separated by 1px black lines
@@ -723,18 +799,18 @@ function _updateTourVisuals() {
                     ? (tourRepeatStyle.primaryColor || '#00CC00')
                     : (tourRepeatStyle.secondaryColor || '#000000');
                 const srcId = 'pathchooser-tour-' + (tourIdx++) + '-' + pathId;
-                _map.addSource(srcId, { type: 'geojson', data: geojson });
+                _internal.map.addSource(srcId, { type: 'geojson', data: geojson });
                 const paint = {
                     'line-color': color,
                     'line-width': Math.max(1, w),
                     'line-opacity': tourRepeatStyle.opacity ?? 1,
                 };
                 if (tourRepeatStyle.dasharray) paint['line-dasharray'] = tourRepeatStyle.dasharray;
-                _map.addLayer({
+                _internal.map.addLayer({
                     id: srcId, type: 'line', source: srcId,
                     paint,
                 });
-                _tourLayerIds.push(srcId);
+                _internal.tourLayerIds.push(srcId);
                 w -= (i % 2 === 0)
                     ? (tourRepeatStyle.primaryShrink ?? 10)
                     : (tourRepeatStyle.secondaryShrink ?? 2);
@@ -742,18 +818,18 @@ function _updateTourVisuals() {
         }
     }
 
-    if (!window._previewMode) {
+    if (!_internal.previewMode) {
         // Draw candidate paths (reachable from last node) on top
         const candidateStyle = _lineStyleFor('candidate');
         let candidateIdx = 0;
         for (const pathId of candidatePathIds) {
             const path = store.paths.get(pathId);
             const srcId = 'pathchooser-candidate-' + (candidateIdx++) + '-' + pathId;
-            _map.addSource(srcId, {
+            _internal.map.addSource(srcId, {
                 type: 'geojson',
                 data: { type: 'Feature', geometry: { type: 'LineString', coordinates: path.trackPoints } },
             });
-            _map.addLayer({
+            _internal.map.addLayer({
                 id: srcId,
                 type: 'line',
                 source: srcId,
@@ -764,7 +840,7 @@ function _updateTourVisuals() {
                     ...(candidateStyle.dasharray ? { 'line-dasharray': candidateStyle.dasharray } : {}),
                 },
             });
-            _tourLayerIds.push(srcId);
+            _internal.tourLayerIds.push(srcId);
         }
     }
 
@@ -800,9 +876,10 @@ let overlayTimeout;
 /** Update the map overlay showing distance, last waypoint, and neighbors. */
 function _updateOverlay() {
     clearTimeout(overlayTimeout);
-        overlayTimeout = setTimeout(() => {
-        if (!_map) return;
-        const container = _map.getContainer();
+    overlayTimeout = setTimeout(() => {
+        if (!_internal.map) return;
+        _cleanupDetachedEventListeners();
+        const container = _internal.map.getContainer();
 
         let overlay = container.querySelector('#pathchooser-overlay');
         if (!overlay) {
@@ -830,17 +907,17 @@ function _updateOverlay() {
 
         // Total distance
         let totalDist = 0;
-        for (const pathId of _tourPathIds) {
+        for (const pathId of _internal.tourPathIds) {
             totalDist += _pathLength(store.paths.get(pathId).trackPoints);
         }
         const distLine = document.createElement('div');
         distLine.className = 'pathchooser-overlay-distance';
         distLine.style.fontWeight = 'bold';
-        distLine.textContent = `Gesamtl\u00e4nge: ${_formatDist(totalDist)}`;
+        distLine.textContent = `${_t('totalDistance')} ${_formatDist(totalDist)}`;
         overlay.appendChild(distLine);
 
         // Last waypoint
-        const lastId = _tourWaypointIds[_tourWaypointIds.length - 1] || null;
+        const lastId = _internal.tourWaypointIds[_internal.tourWaypointIds.length - 1] || null;
         if (lastId) {
             const lastWp = store.waypoints.get(lastId);
             const row = document.createElement('div');
@@ -851,7 +928,7 @@ function _updateOverlay() {
             row.style.marginTop = '4px';
             const lbl = document.createElement('span');
             lbl.className = 'pathchooser-overlay-current-label';
-            lbl.textContent = 'Aktuell:';
+            lbl.textContent = _t('currentWaypoint');
             const badge = _createWaypointBadge(lastWp);
             badge.classList.add('pathchooser-overlay-current-badge');
             badge.style.border = '4px solid #FFD700';
@@ -859,15 +936,15 @@ function _updateOverlay() {
             row.appendChild(badge);
 
             // "zurück" button — removes the last waypoint
-            if (_tourWaypointIds.length > 1) {
+            if (_internal.tourWaypointIds.length > 1) {
                 const backBtn = document.createElement('button');
                 backBtn.className = 'pathchooser-overlay-action pathchooser-overlay-back';
-                backBtn.textContent = 'zur\u00fcck';
+                backBtn.textContent = _t('back');
                 backBtn.style.pointerEvents = 'auto';
                 backBtn.style.cursor = 'pointer';
                 backBtn.style.fontSize = '12px';
                 backBtn.onclick = () => {
-                    _trimTourTo(_tourWaypointIds.length - 2);
+                    _trimTourTo(_internal.tourWaypointIds.length - 2);
                     _fitToLastWaypoints();
                 };
                 row.appendChild(backBtn);
@@ -875,13 +952,13 @@ function _updateOverlay() {
                 // Single node — offer to clear the tour
                 const resetBtn = document.createElement('button');
                 resetBtn.className = 'pathchooser-overlay-action pathchooser-overlay-reset';
-                resetBtn.textContent = 'Neustart';
+                resetBtn.textContent = _t('reset');
                 resetBtn.style.pointerEvents = 'auto';
                 resetBtn.style.cursor = 'pointer';
                 resetBtn.style.fontSize = '12px';
                 resetBtn.onclick = () => {
-                    _tourWaypointIds.length = 0;
-                    _tourPathIds.length = 0;
+                    _internal.tourWaypointIds.length = 0;
+                    _internal.tourPathIds.length = 0;
                     _updateTourVisuals();
                     _updateNodeList();
                 };
@@ -898,7 +975,7 @@ function _updateOverlay() {
                 nRow.style.marginTop = '4px';
                 const nLbl = document.createElement('div');
                 nLbl.className = 'pathchooser-overlay-neighbors-label';
-                nLbl.textContent = 'N\u00e4chste:';
+                nLbl.textContent = _t('nextWaypoints');
                 nRow.appendChild(nLbl);
                 const badges = document.createElement('div');
                 badges.className = 'pathchooser-overlay-neighbors-badges';
@@ -911,7 +988,7 @@ function _updateOverlay() {
                     nb.classList.add('pathchooser-overlay-neighbor-badge');
                     nb.style.cursor = 'pointer';
                     nb.style.pointerEvents = 'auto';
-                    nb.addEventListener('click', () => {
+                    _addEventListener(nb, 'click', () => {
                         _onWaypointClick(neighbor.id);
                         _fitToLastWaypoints();
                     });
@@ -924,7 +1001,7 @@ function _updateOverlay() {
             const hint = document.createElement('div');
             hint.className = 'pathchooser-overlay-hint';
             hint.style.color = '#666';
-            hint.textContent = 'Klicke einen Wegpunkt zum Starten';
+            hint.textContent = _t('startHint');
             overlay.appendChild(hint);
         }
     }, 50);
@@ -932,17 +1009,17 @@ function _updateOverlay() {
 
 /** Fit the map so the last N tour waypoints (default 4) are all visible. */
 function _fitToLastWaypoints(n) {
-    if (!_map || _tourWaypointIds.length === 0) return;
+    if (!_internal.map || _internal.tourWaypointIds.length === 0) return;
     n = n || 4;
-    const ids = _tourWaypointIds.slice(-n);
+    const ids = _internal.tourWaypointIds.slice(-n);
     const coords = ids.map(id => store.waypoints.get(id).coords);
     const bounds = new maplibregl.LngLatBounds(coords[0], coords[0]);
     for (const c of coords) bounds.extend(c);
     // Only move/zoom if any point is outside the current view
-    const mapBounds = _map.getBounds();
+    const mapBounds = _internal.map.getBounds();
     const allVisible = coords.every(c => mapBounds.contains(c));
     if (!allVisible) {
-        _map.fitBounds(bounds, { padding: 80, maxZoom: _map.getZoom() });
+        _internal.map.fitBounds(bounds, { padding: 80, maxZoom: _internal.map.getZoom() });
     }
 }
 
@@ -953,7 +1030,7 @@ function _updateNodeList() {
     nodeList.classList.add('pathchooser-node-list');
     nodeList.innerHTML = '';
 
-    _tourWaypointIds.forEach((wpId, index) => {
+    _internal.tourWaypointIds.forEach((wpId, index) => {
         const wp = store.waypoints.get(wpId);
 
         const div = document.createElement('div');
@@ -978,11 +1055,11 @@ function _updateNodeList() {
         const badge = _createWaypointBadge(wp);
         badge.classList.add('pathchooser-node-badge');
         badge.style.cursor = 'pointer';
-        badge.addEventListener('click', () => {
-            if (!_map) return;
-            _map.flyTo({ center: wp.coords, speed: 1.2 });
+        _addEventListener(badge, 'click', () => {
+            if (!_internal.map) return;
+            _internal.map.flyTo({ center: wp.coords, speed: 1.2 });
             // Bring the corresponding map marker to front and full opacity
-            for (const m of _markers) {
+            for (const m of _internal.markers) {
                 if (m._waypointId === wpId) {
                     m._innerElement.style.opacity = '1';
                     m.getElement().style.zIndex = '10';
@@ -1007,11 +1084,11 @@ function _updateNodeList() {
         // "Remove from here" button: trims tour back to this node
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'pathchooser-node-delete';
-        deleteBtn.textContent = index === 0 ? 'Alles löschen' : 'Ab hier löschen';
+        deleteBtn.textContent = index === 0 ? _t('deleteAll') : _t('deleteFrom');
         deleteBtn.onclick = () => {
             if (index === 0) {
-                _tourWaypointIds.length = 0;
-                _tourPathIds.length = 0;
+                _internal.tourWaypointIds.length = 0;
+                _internal.tourPathIds.length = 0;
             } else {
                 _trimTourTo(index - 1);
                 return;
@@ -1027,14 +1104,14 @@ function _updateNodeList() {
     });
 
     // "Reverse" button: reverse the entire tour order
-    if (_tourWaypointIds.length >= 2) {
+    if (_internal.tourWaypointIds.length >= 2) {
         const reverseBtn = document.createElement('button');
         reverseBtn.className = 'pathchooser-node-reverse';
-        reverseBtn.textContent = 'Route umkehren';
+        reverseBtn.textContent = _t('reverse');
         reverseBtn.style.margin = '8px 5px';
         reverseBtn.onclick = () => {
-            _tourWaypointIds.reverse();
-            _tourPathIds.reverse();
+            _internal.tourWaypointIds.reverse();
+            _internal.tourPathIds.reverse();
             _updateTourVisuals();
             _updateNodeList();
         };
@@ -1042,10 +1119,10 @@ function _updateNodeList() {
     }
 
     // Distance summary
-    if (_tourPathIds.length > 0) {
+    if (_internal.tourPathIds.length > 0) {
         const distByTag = new Map();
         let totalDist = 0;
-        for (const pathId of _tourPathIds) {
+        for (const pathId of _internal.tourPathIds) {
             const path = store.paths.get(pathId);
             const d = _pathLength(path.trackPoints);
             totalDist += d;
@@ -1056,7 +1133,7 @@ function _updateNodeList() {
         summary.className = 'pathchooser-node-summary';
         summary.style.padding = '8px 5px';
         summary.style.fontWeight = 'bold';
-        summary.textContent = `Gesamtlänge: ${_formatDist(totalDist)}`;
+        summary.textContent = `${_t('totalDistance')} ${_formatDist(totalDist)}`;
 
         if (distByTag.size > 1) {
             for (const [tag, dist] of distByTag) {
@@ -1074,7 +1151,7 @@ function _updateNodeList() {
     }
 
     // Routenvorschau checkbox
-    if (_tourWaypointIds.length >= 2) {
+    if (_internal.tourWaypointIds.length >= 2) {
         const previewRow = document.createElement('div');
         previewRow.className = 'pathchooser-node-preview';
         previewRow.style.display = 'flex';
@@ -1083,15 +1160,15 @@ function _updateNodeList() {
         previewRow.style.margin = '8px 5px';
         const previewLabel = document.createElement('label');
         previewLabel.className = 'pathchooser-node-preview-label';
-        previewLabel.textContent = 'Routenvorschau';
+        previewLabel.textContent = _t('preview');
         const previewCheckbox = document.createElement('input');
         previewCheckbox.className = 'pathchooser-node-preview-checkbox';
         previewCheckbox.type = 'checkbox';
-        previewCheckbox.checked = window._previewMode || false;
+        previewCheckbox.checked = _internal.previewMode || false;
         previewCheckbox.style.pointerEvents = 'auto';
         previewCheckbox.style.cursor = 'pointer';
         previewCheckbox.onchange = () => {
-            window._previewMode = previewCheckbox.checked;
+            _internal.previewMode = previewCheckbox.checked;
             _syncPaths();
             _updateTourVisuals();
         };
@@ -1102,14 +1179,14 @@ function _updateNodeList() {
         // Download GPX button
         const dlBtn = document.createElement('button');
         dlBtn.className = 'pathchooser-node-download';
-        dlBtn.textContent = 'GPX herunterladen';
+        dlBtn.textContent = _t('download');
         dlBtn.style.margin = '8px 5px';
         dlBtn.onclick = () => _downloadGpx();
         nodeList.appendChild(dlBtn);
     } else {
         // Make sure we are not in preview mode anymore.
-        if (window._previewMode) {
-            window._previewMode = false;
+        if (_internal.previewMode) {
+            _internal.previewMode = false;
             _syncPaths();
             _updateTourVisuals();
         }
@@ -1134,15 +1211,15 @@ function _formatDist(meters) {
 
 /** Build a GPX XML string from the current tour and trigger a download. */
 function _downloadGpx() {
-    if (_tourWaypointIds.length < 2) return;
+    if (_internal.tourWaypointIds.length < 2) return;
 
     const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
     // Collect correctly oriented track points
     const allPoints = [];
-    for (let i = 0; i < _tourPathIds.length; i++) {
-        const fromWpId = _tourWaypointIds[i];
-        const path = store.paths.get(_tourPathIds[i]);
+    for (let i = 0; i < _internal.tourPathIds.length; i++) {
+        const fromWpId = _internal.tourWaypointIds[i];
+        const path = store.paths.get(_internal.tourPathIds[i]);
         let pts = path.trackPoints;
         if (path.startWaypointId !== fromWpId) {
             pts = [...pts].reverse();
@@ -1157,13 +1234,13 @@ function _downloadGpx() {
         allPoints.push(...pts);
     }
 
-    const firstWp = store.waypoints.get(_tourWaypointIds[0]);
-    const lastWp = store.waypoints.get(_tourWaypointIds[_tourWaypointIds.length - 1]);
-    const trackName = `Route von ${firstWp.label} nach ${lastWp.label}`;
+    const firstWp = store.waypoints.get(_internal.tourWaypointIds[0]);
+    const lastWp = store.waypoints.get(_internal.tourWaypointIds[_internal.tourWaypointIds.length - 1]);
+    const trackName = _t('routeFrom', { from: firstWp.label, to: lastWp.label });
 
     // Compute total distance
     let totalDist = 0;
-    for (const pathId of _tourPathIds) {
+    for (const pathId of _internal.tourPathIds) {
         totalDist += _pathLength(store.paths.get(pathId).trackPoints);
     }
 
@@ -1172,18 +1249,18 @@ function _downloadGpx() {
     gpx += `     xmlns="http://www.topografix.com/GPX/1/1">\n`;
     gpx += `  <metadata>\n`;
     gpx += `    <name>${esc(trackName)}</name>\n`;
-    gpx += `    <desc>${esc(_tourWaypointIds.length + ' Wegpunkte, ' + _formatDist(totalDist))}</desc>\n`;
+    gpx += `    <desc>${esc(_t('waypointsDistance', { count: _internal.tourWaypointIds.length, distance: _formatDist(totalDist) }))}</desc>\n`;
     gpx += `    <time>${new Date().toISOString()}</time>\n`;
     gpx += `  </metadata>\n`;
 
     // Labeled waypoints for each tour stop
-    _tourWaypointIds.forEach((wpId, i) => {
+    _internal.tourWaypointIds.forEach((wpId, i) => {
         const wp = store.waypoints.get(wpId);
         gpx += `  <wpt lat="${wp.coords[1]}" lon="${wp.coords[0]}">\n`;
         gpx += `    <name>${esc(wp.label)}</name>\n`;
         gpx += `    <desc>${esc(wp.tag)}</desc>\n`;
         gpx += `    <type>${esc(wp.tag)}</type>\n`;
-        gpx += `    <cmt>Stop ${i + 1} von ${_tourWaypointIds.length}</cmt>\n`;
+        gpx += `    <cmt>Stop ${i + 1} von ${_internal.tourWaypointIds.length}</cmt>\n`;
         gpx += `  </wpt>\n`;
     });
 
