@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>GPX Merger</title>
+</head>
+<body>
+  <h1>GPX-Dateien zusammenführen</h1>
+  <input type="file" id="files" multiple accept=".gpx" />
+  <button onclick="merge()">Zusammenführen</button>
+  <a id="download" style="display:none">⬇ Herunterladen</a>
+
+  <script>
+    async function merge() {
+      const files = document.getElementById('files').files;
+      if (!files.length) return alert('Bitte GPX-Dateien auswählen.');
+
+      const tracks = [];
+
+      for (const file of files) {
+        const text = await file.text();
+        const parser = new DOMParser();
+        const xml = parser.parseFromString(text, 'application/xml');
+        // Alle <trk> Elemente extrahieren
+        const trks = xml.getElementsByTagName('trk');
+        for (const trk of trks) {
+          tracks.push(trk.outerHTML);
+        }
+      }
+
+      const merged = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="GPX Merger"
+     xmlns="http://www.topografix.com/GPX/1/1">
+  ${tracks.join('\n  ')}
+</gpx>`;
+
+      const blob = new Blob([merged], { type: 'application/gpx+xml' });
+      const url = URL.createObjectURL(blob);
+      const link = document.getElementById('download');
+      link.href = url;
+      link.download = 'merged.gpx';
+      link.style.display = 'inline';
+      link.textContent = `⬇ merged.gpx herunterladen (${tracks.length} Tracks)`;
+    }
+  </script>
+</body>
+</html>

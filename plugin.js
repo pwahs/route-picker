@@ -6,8 +6,12 @@ const MATCH_THRESHOLD_METERS = 50;
 
 // ── Helpers ────────────────────────────────────────────────────────
 
+const distanceCache = new Map();
+
 /** Haversine distance between two [lng, lat] pairs, in metres. */
 function distanceMeters(a, b) {
+    const key = `${a[0]},${a[1]}|${b[0]},${b[1]}`;
+    if (distanceCache.has(key)) return distanceCache.get(key);
     const toRad = (d) => (d * Math.PI) / 180;
     const R = 6_371_000; // earth radius in metres
     const dLat = toRad(b[1] - a[1]);
@@ -17,7 +21,9 @@ function distanceMeters(a, b) {
     const h =
         sinLat * sinLat +
         Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * sinLng * sinLng;
-    return 2 * R * Math.asin(Math.sqrt(h));
+    const result = 2 * R * Math.asin(Math.sqrt(h))
+    distanceCache.set(key, result);
+    return result;
 }
 
 let _nextWaypointId = 1;
@@ -173,7 +179,7 @@ const _pathLayerIds = [];
  *
  * @type {Object<string, Object>}
  */
-window.PathChooser.styles = {
+const waypointStyleDefaults = {
     _default: {
         background: 'white',
         border: '2px solid blue',
@@ -182,6 +188,77 @@ window.PathChooser.styles = {
         height: 28,
         fontSize: '12px',
         shape: 'circle',
+    },
+};
+const existingWaypointStyles = window.PathChooser.styles || {};
+window.PathChooser.styles = {
+    ...existingWaypointStyles,
+    _default: {
+        ...waypointStyleDefaults._default,
+        ...(existingWaypointStyles._default || {}),
+    },
+};
+
+/**
+ * Global line style options for non-tag-specific overlays.
+ *
+ * Keys:
+ *   _default   – fallback for all line groups
+ *   basePath   – regular path layers rendered from loaded files
+ *   tourSingle – selected tour path when a segment appears once
+ *   tourRepeat – selected tour path when a segment appears multiple times
+ *   candidate  – neighbor/candidate paths from the current endpoint
+ *
+ * @type {Object<string, Object>}
+ */
+const lineStyleDefaults = {
+    _default: {
+        width: 3,
+        opacity: 0.5,
+    },
+    basePath: {},
+    tourSingle: {
+        color: '#00CC00',
+        width: 6,
+        opacity: 1,
+    },
+    tourRepeat: {
+        primaryColor: '#00CC00',
+        secondaryColor: '#000000',
+        baseWidthPerOccurrence: 6,
+        overlapAdjustment: 1,
+        primaryShrink: 10,
+        secondaryShrink: 2,
+        opacity: 1,
+    },
+    candidate: {
+        color: '#FF0000',
+        width: 2,
+        opacity: 1,
+    },
+};
+const existingLineStyles = window.PathChooser.lineStyles || {};
+window.PathChooser.lineStyles = {
+    ...existingLineStyles,
+    _default: {
+        ...lineStyleDefaults._default,
+        ...(existingLineStyles._default || {}),
+    },
+    basePath: {
+        ...lineStyleDefaults.basePath,
+        ...(existingLineStyles.basePath || {}),
+    },
+    tourSingle: {
+        ...lineStyleDefaults.tourSingle,
+        ...(existingLineStyles.tourSingle || {}),
+    },
+    tourRepeat: {
+        ...lineStyleDefaults.tourRepeat,
+        ...(existingLineStyles.tourRepeat || {}),
+    },
+    candidate: {
+        ...lineStyleDefaults.candidate,
+        ...(existingLineStyles.candidate || {}),
     },
 };
 
@@ -199,11 +276,25 @@ window.PathChooser.setMap = function (map) {
     });
 };
 
+// Add a style cache
+const styleCache = new Map();
+
 /** Resolve the effective style for a given tag. */
 function _styleFor(tag) {
+    if (styleCache.has(tag)) return styleCache.get(tag);
     const styles = window.PathChooser.styles;
     const s = styles[tag] || {};
     const d = styles._default || {};
+    const computedStyle = {...d, ...s};
+    styleCache.set(tag, computedStyle);
+    return computedStyle;
+}
+
+/** Resolve effective global line style for a named line group. */
+function _lineStyleFor(group) {
+    const lineStyles = window.PathChooser.lineStyles || {};
+    const d = lineStyles._default || {};
+    const s = lineStyles[group] || {};
     return { ...d, ...s };
 }
 
@@ -220,9 +311,13 @@ function _syncMarkers() {
 
         // Outer container passed to MapLibre (it controls opacity on this)
         const container = document.createElement('div');
+        container.className = 'pathchooser-marker';
+        container.dataset.waypointId = wp.id;
 
         // Inner element with our styling (we control opacity on this)
         const el = document.createElement('div');
+        el.className = 'pathchooser-marker-inner';
+        el.dataset.tag = wp.tag;
         el.style.background = s.background;
         el.style.border = s.border;
         el.style.borderRadius = s.shape === 'circle' ? '50%' : '0';
@@ -265,6 +360,7 @@ function _syncPaths() {
 
     for (const path of store.paths.values()) {
         const s = _styleFor(path.tag);
+        const baseLineStyle = _lineStyleFor('basePath');
         const sourceId = 'pathchooser-path-' + path.id;
 
         _map.addSource(sourceId, {
@@ -276,10 +372,12 @@ function _syncPaths() {
         });
 
         const paint = {
-                'line-color': s.lineColor || s.background || 'red',
-                'line-width': s.lineWidth || 3,
-            };
-        if (s.lineDasharray) paint['line-dasharray'] = s.lineDasharray;
+            'line-color': s.lineColor || baseLineStyle.color || s.background || 'red',
+            'line-width': s.lineWidth ?? baseLineStyle.width ?? 3,
+            'line-opacity': s.lineOpacity ?? s.opacity ?? baseLineStyle.opacity ?? 1,
+        };
+        const lineDasharray = s.lineDasharray || baseLineStyle.dasharray;
+        if (lineDasharray) paint['line-dasharray'] = lineDasharray;
 
         if (!window._previewMode) {
             _map.addLayer({
@@ -300,10 +398,7 @@ function _syncPaths() {
 /**
  * Load waypoints and paths from a URL.
  *
- * TODO: implement actual GPX/GeoJSON parsing.
- * For now this is a placeholder that logs the URL and returns the store.
- *
- * Expected behaviour once implemented:
+ * Expected behaviour:
  * 1. Fetch the file at `url`.
  * 2. Parse waypoints → call store.addWaypoint(label, tag, coords) for each.
  * 3. Parse tracks  → for each track, resolve start/end via
@@ -531,54 +626,56 @@ function _updateTourVisuals() {
 
     const tourWpSet = new Set(_tourWaypointIds);
 
-    // Update marker appearances
-    for (const marker of _markers) {
-        // console.log("Updating marker for waypoint " + marker._waypointId, " previewMode=" + window._previewMode);
-        const wpId = marker._waypointId;
-        const el = marker._innerElement;
-        const wp = store.waypoints.get(wpId);
-        const s = _styleFor(wp.tag);
+    requestAnimationFrame(() => {
+        // Update marker appearances
+        for (const marker of _markers) {
+            // console.log("Updating marker for waypoint " + marker._waypointId, " previewMode=" + window._previewMode);
+            const wpId = marker._waypointId;
+            const el = marker._innerElement;
+            const wp = store.waypoints.get(wpId);
+            const s = _styleFor(wp.tag);
 
-        if (wpId === lastId) {
-            // Last selected node: yellow border, full opacity
-            el.style.background = s.background;
-            el.style.border = window._previewMode ? '4px solid #000000': '4px solid #FFD700';
-            el.style.cursor = clickableIds.has(wpId) ? 'pointer' : 'default';
-            el.style.opacity = '1';
-            marker.getElement().style.zIndex = '3';
-        } else if (window._previewMode) {
-            if (wpId == firstId) {
-                console.log("Preview mode: highlighting first node " + wpId);
+            if (wpId === lastId) {
+                // Last selected node: yellow border, full opacity
                 el.style.background = s.background;
-                el.style.border = '4px solid #000000';
-                el.style.cursor = 'default';
+                el.style.border = window._previewMode ? '4px solid #000000': '4px solid #FFD700';
+                el.style.cursor = clickableIds.has(wpId) ? 'pointer' : 'default';
                 el.style.opacity = '1';
                 marker.getElement().style.zIndex = '3';
-            } else if (_tourWaypointIds.includes(wpId)) {
+            } else if (window._previewMode) {
+                if (wpId == firstId) {
+                    console.log("Preview mode: highlighting first node " + wpId);
+                    el.style.background = s.background;
+                    el.style.border = '4px solid #000000';
+                    el.style.cursor = 'default';
+                    el.style.opacity = '1';
+                    marker.getElement().style.zIndex = '3';
+                } else if (_tourWaypointIds.includes(wpId)) {
+                    el.style.background = s.background;
+                    el.style.border = 'none';
+                    el.style.cursor = 'default';
+                    el.style.opacity = '1';
+                    marker.getElement().style.zIndex = '2';
+                } else {
+                    el.style.opacity = '0';
+                }
+            } else if (clickableIds.has(wpId)) {
+                // Clickable neighbor (may also be in tour): full opacity
                 el.style.background = s.background;
-                el.style.border = 'none';
-                el.style.cursor = 'default';
+                el.style.border = tourWpSet.has(wpId) ? '4px solid white' : s.border;
+                el.style.cursor = 'pointer';
                 el.style.opacity = '1';
                 marker.getElement().style.zIndex = '2';
             } else {
-                el.style.opacity = '0';
+                // Not clickable: dim (includes tour nodes that aren't last or neighbor)
+                el.style.background = s.background;
+                el.style.border = tourWpSet.has(wpId) ? '4px solid white' : s.border;
+                el.style.cursor = 'default';
+                el.style.opacity = '0.3';
+                marker.getElement().style.zIndex = '0';
             }
-        } else if (clickableIds.has(wpId)) {
-            // Clickable neighbor (may also be in tour): full opacity
-            el.style.background = s.background;
-            el.style.border = tourWpSet.has(wpId) ? '4px solid white' : s.border;
-            el.style.cursor = 'pointer';
-            el.style.opacity = '1';
-            marker.getElement().style.zIndex = '2';
-        } else {
-            // Not clickable: dim (includes tour nodes that aren't last or neighbor)
-            el.style.background = s.background;
-            el.style.border = tourWpSet.has(wpId) ? '4px solid white' : s.border;
-            el.style.cursor = 'default';
-            el.style.opacity = '0.3';
-            marker.getElement().style.zIndex = '0';
         }
-    }
+    });
 
     // Remove old tour/candidate layers
     for (const id of _tourLayerIds) {
@@ -592,6 +689,8 @@ function _updateTourVisuals() {
     for (const pathId of _tourPathIds) {
         tourPathCounts.set(pathId, (tourPathCounts.get(pathId) || 0) + 1);
     }
+    const tourSingleStyle = _lineStyleFor('tourSingle');
+    const tourRepeatStyle = _lineStyleFor('tourRepeat');
     let tourIdx = 0;
     for (const [pathId, count] of tourPathCounts) {
         const path = store.paths.get(pathId);
@@ -604,31 +703,48 @@ function _updateTourVisuals() {
             // Single use: one green layer
             const srcId = 'pathchooser-tour-' + (tourIdx++) + '-' + pathId;
             _map.addSource(srcId, { type: 'geojson', data: geojson });
+            const paint = {
+                'line-color': tourSingleStyle.color || '#00CC00',
+                'line-width': tourSingleStyle.width ?? 6,
+                'line-opacity': tourSingleStyle.opacity ?? 1,
+            };
+            if (tourSingleStyle.dasharray) paint['line-dasharray'] = tourSingleStyle.dasharray;
             _map.addLayer({
                 id: srcId, type: 'line', source: srcId,
-                paint: { 'line-color': '#00CC00', 'line-width': 6 },
+                paint,
             });
             _tourLayerIds.push(srcId);
         } else {
             // Multiple uses: concentric layers (green/black/green/...)
             // 5px green bands separated by 1px black lines
-            let w = 6 * count - 1;
+            let w = (tourRepeatStyle.baseWidthPerOccurrence ?? 6) * count - (tourRepeatStyle.overlapAdjustment ?? 1);
             for (let i = 0; i < count; i++) {
-                const color = i % 2 === 0 ? '#00CC00' : '#000000';
+                const color = i % 2 === 0
+                    ? (tourRepeatStyle.primaryColor || '#00CC00')
+                    : (tourRepeatStyle.secondaryColor || '#000000');
                 const srcId = 'pathchooser-tour-' + (tourIdx++) + '-' + pathId;
                 _map.addSource(srcId, { type: 'geojson', data: geojson });
+                const paint = {
+                    'line-color': color,
+                    'line-width': Math.max(1, w),
+                    'line-opacity': tourRepeatStyle.opacity ?? 1,
+                };
+                if (tourRepeatStyle.dasharray) paint['line-dasharray'] = tourRepeatStyle.dasharray;
                 _map.addLayer({
                     id: srcId, type: 'line', source: srcId,
-                    paint: { 'line-color': color, 'line-width': w },
+                    paint,
                 });
                 _tourLayerIds.push(srcId);
-                w -= (i % 2 === 0) ? 10 : 2;
+                w -= (i % 2 === 0)
+                    ? (tourRepeatStyle.primaryShrink ?? 10)
+                    : (tourRepeatStyle.secondaryShrink ?? 2);
             }
         }
     }
 
     if (!window._previewMode) {
         // Draw candidate paths (reachable from last node) on top
+        const candidateStyle = _lineStyleFor('candidate');
         let candidateIdx = 0;
         for (const pathId of candidatePathIds) {
             const path = store.paths.get(pathId);
@@ -641,7 +757,12 @@ function _updateTourVisuals() {
                 id: srcId,
                 type: 'line',
                 source: srcId,
-                paint: { 'line-color': '#FFD700', 'line-width': 2 },
+                paint: {
+                    'line-color': candidateStyle.color || '#FF0000',
+                    'line-width': candidateStyle.width ?? 2,
+                    'line-opacity': candidateStyle.opacity ?? 1,
+                    ...(candidateStyle.dasharray ? { 'line-dasharray': candidateStyle.dasharray } : {}),
+                },
             });
             _tourLayerIds.push(srcId);
         }
@@ -654,6 +775,9 @@ function _updateTourVisuals() {
 function _createWaypointBadge(wp) {
     const s = _styleFor(wp.tag);
     const badge = document.createElement('span');
+    badge.className = 'pathchooser-waypoint-badge';
+    badge.dataset.tag = wp.tag;
+    badge.dataset.waypointId = wp.id;
     badge.style.display = 'inline-flex';
     badge.style.alignItems = 'center';
     badge.style.justifyContent = 'center';
@@ -671,122 +795,139 @@ function _createWaypointBadge(wp) {
     return badge;
 }
 
+let overlayTimeout;
+
 /** Update the map overlay showing distance, last waypoint, and neighbors. */
 function _updateOverlay() {
-    if (!_map) return;
-    const container = _map.getContainer();
+    clearTimeout(overlayTimeout);
+        overlayTimeout = setTimeout(() => {
+        if (!_map) return;
+        const container = _map.getContainer();
 
-    let overlay = container.querySelector('#pathchooser-overlay');
-    if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'pathchooser-overlay';
-        overlay.style.position = 'absolute';
-        overlay.style.top = '10px';
-        overlay.style.left = '10px';
-        overlay.style.zIndex = '10';
-        overlay.style.background = 'rgba(255,255,255,0.92)';
-        overlay.style.borderRadius = '6px';
-        overlay.style.padding = '8px 12px';
-        overlay.style.fontSize = '13px';
-        overlay.style.lineHeight = '1.6';
-        overlay.style.boxShadow = '0 1px 4px rgba(0,0,0,0.25)';
+        let overlay = container.querySelector('#pathchooser-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'pathchooser-overlay';
+            overlay.className = 'pathchooser-overlay';
+            overlay.style.position = 'absolute';
+            overlay.style.top = '10px';
+            overlay.style.left = '10px';
+            overlay.style.zIndex = '10';
+            overlay.style.background = 'rgba(255,255,255,0.92)';
+            overlay.style.borderRadius = '6px';
+            overlay.style.padding = '8px 12px';
+            overlay.style.fontSize = '13px';
+            overlay.style.lineHeight = '1.6';
+            overlay.style.boxShadow = '0 1px 4px rgba(0,0,0,0.25)';
+            overlay.style.pointerEvents = 'none';
+            overlay.style.maxWidth = '260px';
+            container.appendChild(overlay);
+        }
+
+        overlay.innerHTML = '';
+        // Enable pointer events only on interactive children
         overlay.style.pointerEvents = 'none';
-        overlay.style.maxWidth = '260px';
-        container.appendChild(overlay);
-    }
 
-    overlay.innerHTML = '';
-    // Enable pointer events only on interactive children
-    overlay.style.pointerEvents = 'none';
-
-    // Total distance
-    let totalDist = 0;
-    for (const pathId of _tourPathIds) {
-        totalDist += _pathLength(store.paths.get(pathId).trackPoints);
-    }
-    const distLine = document.createElement('div');
-    distLine.style.fontWeight = 'bold';
-    distLine.textContent = `Gesamtl\u00e4nge: ${_formatDist(totalDist)}`;
-    overlay.appendChild(distLine);
-
-    // Last waypoint
-    const lastId = _tourWaypointIds[_tourWaypointIds.length - 1] || null;
-    if (lastId) {
-        const lastWp = store.waypoints.get(lastId);
-        const row = document.createElement('div');
-        row.style.display = 'flex';
-        row.style.alignItems = 'center';
-        row.style.gap = '6px';
-        row.style.marginTop = '4px';
-        const lbl = document.createElement('span');
-        lbl.textContent = 'Aktuell:';
-        const badge = _createWaypointBadge(lastWp);
-        badge.style.border = '4px solid #FFD700';
-        row.appendChild(lbl);
-        row.appendChild(badge);
-
-        // "zurück" button — removes the last waypoint
-        if (_tourWaypointIds.length > 1) {
-            const backBtn = document.createElement('button');
-            backBtn.textContent = 'zur\u00fcck';
-            backBtn.style.pointerEvents = 'auto';
-            backBtn.style.cursor = 'pointer';
-            backBtn.style.fontSize = '12px';
-            backBtn.onclick = () => {
-                _trimTourTo(_tourWaypointIds.length - 2);
-                _fitToLastWaypoints();
-            };
-            row.appendChild(backBtn);
-        } else {
-            // Single node — offer to clear the tour
-            const resetBtn = document.createElement('button');
-            resetBtn.textContent = 'Neustart';
-            resetBtn.style.pointerEvents = 'auto';
-            resetBtn.style.cursor = 'pointer';
-            resetBtn.style.fontSize = '12px';
-            resetBtn.onclick = () => {
-                _tourWaypointIds.length = 0;
-                _tourPathIds.length = 0;
-                _updateTourVisuals();
-                _updateNodeList();
-            };
-            row.appendChild(resetBtn);
+        // Total distance
+        let totalDist = 0;
+        for (const pathId of _tourPathIds) {
+            totalDist += _pathLength(store.paths.get(pathId).trackPoints);
         }
+        const distLine = document.createElement('div');
+        distLine.className = 'pathchooser-overlay-distance';
+        distLine.style.fontWeight = 'bold';
+        distLine.textContent = `Gesamtl\u00e4nge: ${_formatDist(totalDist)}`;
+        overlay.appendChild(distLine);
 
-        overlay.appendChild(row);
+        // Last waypoint
+        const lastId = _tourWaypointIds[_tourWaypointIds.length - 1] || null;
+        if (lastId) {
+            const lastWp = store.waypoints.get(lastId);
+            const row = document.createElement('div');
+            row.className = 'pathchooser-overlay-current';
+            row.style.display = 'flex';
+            row.style.alignItems = 'center';
+            row.style.gap = '6px';
+            row.style.marginTop = '4px';
+            const lbl = document.createElement('span');
+            lbl.className = 'pathchooser-overlay-current-label';
+            lbl.textContent = 'Aktuell:';
+            const badge = _createWaypointBadge(lastWp);
+            badge.classList.add('pathchooser-overlay-current-badge');
+            badge.style.border = '4px solid #FFD700';
+            row.appendChild(lbl);
+            row.appendChild(badge);
 
-        // Neighbor waypoints
-        const neighbors = store.getNeighbors(lastId);
-        if (neighbors.length > 0) {
-            const nRow = document.createElement('div');
-            nRow.style.marginTop = '4px';
-            const nLbl = document.createElement('div');
-            nLbl.textContent = 'N\u00e4chste:';
-            nRow.appendChild(nLbl);
-            const badges = document.createElement('div');
-            badges.style.display = 'flex';
-            badges.style.flexWrap = 'wrap';
-            badges.style.gap = '4px';
-            badges.style.marginTop = '2px';
-            for (const { neighbor } of neighbors) {
-                const nb = _createWaypointBadge(neighbor);
-                nb.style.cursor = 'pointer';
-                nb.style.pointerEvents = 'auto';
-                nb.addEventListener('click', () => {
-                    _onWaypointClick(neighbor.id);
+            // "zurück" button — removes the last waypoint
+            if (_tourWaypointIds.length > 1) {
+                const backBtn = document.createElement('button');
+                backBtn.className = 'pathchooser-overlay-action pathchooser-overlay-back';
+                backBtn.textContent = 'zur\u00fcck';
+                backBtn.style.pointerEvents = 'auto';
+                backBtn.style.cursor = 'pointer';
+                backBtn.style.fontSize = '12px';
+                backBtn.onclick = () => {
+                    _trimTourTo(_tourWaypointIds.length - 2);
                     _fitToLastWaypoints();
-                });
-                badges.appendChild(nb);
+                };
+                row.appendChild(backBtn);
+            } else {
+                // Single node — offer to clear the tour
+                const resetBtn = document.createElement('button');
+                resetBtn.className = 'pathchooser-overlay-action pathchooser-overlay-reset';
+                resetBtn.textContent = 'Neustart';
+                resetBtn.style.pointerEvents = 'auto';
+                resetBtn.style.cursor = 'pointer';
+                resetBtn.style.fontSize = '12px';
+                resetBtn.onclick = () => {
+                    _tourWaypointIds.length = 0;
+                    _tourPathIds.length = 0;
+                    _updateTourVisuals();
+                    _updateNodeList();
+                };
+                row.appendChild(resetBtn);
             }
-            nRow.appendChild(badges);
-            overlay.appendChild(nRow);
+
+            overlay.appendChild(row);
+
+            // Neighbor waypoints
+            const neighbors = store.getNeighbors(lastId);
+            if (neighbors.length > 0) {
+                const nRow = document.createElement('div');
+                nRow.className = 'pathchooser-overlay-neighbors';
+                nRow.style.marginTop = '4px';
+                const nLbl = document.createElement('div');
+                nLbl.className = 'pathchooser-overlay-neighbors-label';
+                nLbl.textContent = 'N\u00e4chste:';
+                nRow.appendChild(nLbl);
+                const badges = document.createElement('div');
+                badges.className = 'pathchooser-overlay-neighbors-badges';
+                badges.style.display = 'flex';
+                badges.style.flexWrap = 'wrap';
+                badges.style.gap = '4px';
+                badges.style.marginTop = '2px';
+                for (const { neighbor } of neighbors) {
+                    const nb = _createWaypointBadge(neighbor);
+                    nb.classList.add('pathchooser-overlay-neighbor-badge');
+                    nb.style.cursor = 'pointer';
+                    nb.style.pointerEvents = 'auto';
+                    nb.addEventListener('click', () => {
+                        _onWaypointClick(neighbor.id);
+                        _fitToLastWaypoints();
+                    });
+                    badges.appendChild(nb);
+                }
+                nRow.appendChild(badges);
+                overlay.appendChild(nRow);
+            }
+        } else {
+            const hint = document.createElement('div');
+            hint.className = 'pathchooser-overlay-hint';
+            hint.style.color = '#666';
+            hint.textContent = 'Klicke einen Wegpunkt zum Starten';
+            overlay.appendChild(hint);
         }
-    } else {
-        const hint = document.createElement('div');
-        hint.style.color = '#666';
-        hint.textContent = 'Klicke einen Wegpunkt zum Starten';
-        overlay.appendChild(hint);
-    }
+    }, 50);
 }
 
 /** Fit the map so the last N tour waypoints (default 4) are all visible. */
@@ -809,12 +950,14 @@ function _fitToLastWaypoints(n) {
 function _updateNodeList() {
     const nodeList = document.getElementById('node_list');
     if (!nodeList) return;
+    nodeList.classList.add('pathchooser-node-list');
     nodeList.innerHTML = '';
 
     _tourWaypointIds.forEach((wpId, index) => {
         const wp = store.waypoints.get(wpId);
 
         const div = document.createElement('div');
+        div.className = 'pathchooser-node-item';
         div.style.padding = '5px';
         div.style.borderBottom = '1px solid #ccc';
         div.style.display = 'flex';
@@ -822,15 +965,18 @@ function _updateNodeList() {
         div.style.alignItems = 'center';
 
         const label = document.createElement('span');
+        label.className = 'pathchooser-node-label';
         label.style.display = 'flex';
         label.style.alignItems = 'center';
         label.style.gap = '6px';
 
         const numSpan = document.createElement('span');
+        numSpan.className = 'pathchooser-node-index';
         numSpan.textContent = `${index + 1}.`;
         label.appendChild(numSpan);
 
         const badge = _createWaypointBadge(wp);
+        badge.classList.add('pathchooser-node-badge');
         badge.style.cursor = 'pointer';
         badge.addEventListener('click', () => {
             if (!_map) return;
@@ -849,15 +995,18 @@ function _updateNodeList() {
         label.appendChild(badge);
 
         const tagSpan = document.createElement('span');
+        tagSpan.className = 'pathchooser-node-tag';
         tagSpan.textContent = `(${wp.tag})`;
         tagSpan.style.fontStyle = 'italic';
         tagSpan.style.color = '#666';
         label.appendChild(tagSpan);
 
         const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'pathchooser-node-actions';
 
         // "Remove from here" button: trims tour back to this node
         const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'pathchooser-node-delete';
         deleteBtn.textContent = index === 0 ? 'Alles löschen' : 'Ab hier löschen';
         deleteBtn.onclick = () => {
             if (index === 0) {
@@ -880,6 +1029,7 @@ function _updateNodeList() {
     // "Reverse" button: reverse the entire tour order
     if (_tourWaypointIds.length >= 2) {
         const reverseBtn = document.createElement('button');
+        reverseBtn.className = 'pathchooser-node-reverse';
         reverseBtn.textContent = 'Route umkehren';
         reverseBtn.style.margin = '8px 5px';
         reverseBtn.onclick = () => {
@@ -903,6 +1053,7 @@ function _updateNodeList() {
         }
 
         const summary = document.createElement('div');
+        summary.className = 'pathchooser-node-summary';
         summary.style.padding = '8px 5px';
         summary.style.fontWeight = 'bold';
         summary.textContent = `Gesamtlänge: ${_formatDist(totalDist)}`;
@@ -910,6 +1061,7 @@ function _updateNodeList() {
         if (distByTag.size > 1) {
             for (const [tag, dist] of distByTag) {
                 const line = document.createElement('div');
+                line.className = 'pathchooser-node-summary-line';
                 line.style.padding = '2px 5px';
                 line.style.fontWeight = 'normal';
                 line.style.fontStyle = 'italic';
@@ -924,13 +1076,16 @@ function _updateNodeList() {
     // Routenvorschau checkbox
     if (_tourWaypointIds.length >= 2) {
         const previewRow = document.createElement('div');
+        previewRow.className = 'pathchooser-node-preview';
         previewRow.style.display = 'flex';
         previewRow.style.alignItems = 'center';
         previewRow.style.gap = '8px';
         previewRow.style.margin = '8px 5px';
         const previewLabel = document.createElement('label');
+        previewLabel.className = 'pathchooser-node-preview-label';
         previewLabel.textContent = 'Routenvorschau';
         const previewCheckbox = document.createElement('input');
+        previewCheckbox.className = 'pathchooser-node-preview-checkbox';
         previewCheckbox.type = 'checkbox';
         previewCheckbox.checked = window._previewMode || false;
         previewCheckbox.style.pointerEvents = 'auto';
@@ -946,10 +1101,18 @@ function _updateNodeList() {
 
         // Download GPX button
         const dlBtn = document.createElement('button');
+        dlBtn.className = 'pathchooser-node-download';
         dlBtn.textContent = 'GPX herunterladen';
         dlBtn.style.margin = '8px 5px';
         dlBtn.onclick = () => _downloadGpx();
         nodeList.appendChild(dlBtn);
+    } else {
+        // Make sure we are not in preview mode anymore.
+        if (window._previewMode) {
+            window._previewMode = false;
+            _syncPaths();
+            _updateTourVisuals();
+        }
     }
 }
 
@@ -1040,6 +1203,7 @@ function _downloadGpx() {
     const blob = new Blob([gpx], { type: 'application/gpx+xml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
+    a.className = 'pathchooser-download-link';
     a.href = url;
     a.download = trackName.replace(/[^a-zA-Z0-9_\-\u00C0-\u024F ]/g, '') + '.gpx';
     document.body.appendChild(a);
