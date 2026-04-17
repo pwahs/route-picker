@@ -33,7 +33,7 @@ Hier können Lösungen dafür gefunden werden: https://www.ionos.de/digitalguide
 <!-- Javascript startet hier -->
 <script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-<script src="plugin.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/Mittelstand-Digital-Zentrum-Tourismus/route-picker@main/plugin.js"></script>
 
 <script>
 	const map = new maplibregl.Map({
@@ -61,7 +61,7 @@ Hier können Lösungen dafür gefunden werden: https://www.ionos.de/digitalguide
 
 Benötigte Dateien:
 
-- `plugin.js`: Die einzige Datei, die sie aus diesem Projekt brauchen. Kann wie hier angegeben über jsDelivr von github eingebunden werden, oder Sie laden sie runter und stellen Sie auf ihrem eigenen Server bereit.
+- `plugin.js`: Die einzige Datei, die Sie aus diesem Projekt brauchen. Sie kann über jsDelivr eingebunden werden, z.B. `https://cdn.jsdelivr.net/gh/Mittelstand-Digital-Zentrum-Tourismus/route-picker@main/plugin.js`, oder Sie laden sie aus diesem Projekt herunter und stellen sie auf Ihrem eigenen Server bereit.
 - `data/GPS-Daten_Knotenpunkte.xlsx`: mindestens eine Eingabedatei, die die Knotenpunkte enthält. Im oberen Beispiel enthält die Datei ein Sheet mit Namen 'Knotenpunkte'.
 - `data/pfade.gpx`: mindestens eine Eingabedatei, die die Pfade enthält. Wenn die Routen auf viele Dateien verteilt sind, können Sie sie hier kombinieren: 
 https://mittelstand-digital-zentrum-tourismus.github.io/route-picker/merge_gpx.html
