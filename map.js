@@ -10,18 +10,26 @@ async function initializeMap() {
     VectorTextProtocol.addProtocols(maplibregl);
     PathChooser.setMap(map);
 
-    // ── Waypoint styles per tag ───────────────────────────────────────
-    PathChooser.styles['Knotenpunkt'] = {
-        background: 'red',
+    // ── Waypoint styles per tag, tag comes from the xlsx sheet names ────────────
+    PathChooser.styles['ehem. Ruppiner Seenland'] = {
+        background: '#E00000',
+        border: 'none',
+        color: 'white',
+    };
+    PathChooser.styles['ehem. BARnimer Land'] = {
+        background: '#FF2020',
         border: 'none',
         color: 'white',
     };
     PathChooser.styles['Nachbarregionen'] = {
         background: 'grey',
         border: 'none',
+        width: '20',
+        height: '20',
+        fontSize: '10',
         color: 'white',
     };
-    PathChooser.styles['Knotenpunkt in Planung'] = {
+    PathChooser.styles['geplante Knotenpunkte'] = {
         background: 'white',
         border: '1px solid red',
         color: 'red',
@@ -51,7 +59,7 @@ async function initializeMap() {
         width: 2,
         opacity: 1,
     };
-    await PathChooser.loadFromUrl('./data/GPS-Daten_Knotenpunkte.xlsx');
+    await PathChooser.loadFromUrl('./data/GPS-Daten_Knotenpunkte_komplett.xlsx');
 
     // ── Path styles per tag ───────────────────────────────────────────
     PathChooser.styles['≥ 90 % leicht befahrbar'] = {
@@ -59,20 +67,20 @@ async function initializeMap() {
         lineWidth: 3,
         opacity: 0.5,
     };
-    await PathChooser.loadFromUrl('./data/gute_beschaffenheit.gpx', '≥ 90 % leicht befahrbar');
+    await PathChooser.loadFromUrl('./data/merged_gut.gpx', '≥ 90 % leicht befahrbar');
    
     PathChooser.styles['>10 % technisch anspruchsvoll'] = {
         lineColor: 'red',
         lineWidth: 3,
         lineDasharray: [3, 3],  // 3px dash, 3px gap
     };
-    await PathChooser.loadFromUrl('./data/mittlere_beschaffenheit.gpx', '>10 % technisch anspruchsvoll');
+    await PathChooser.loadFromUrl('./data/merged_weniger_gut.gpx', '>10 % technisch anspruchsvoll');
     
     PathChooser.styles['unbekannte Beschaffenheit'] = {
         lineColor: 'grey',
         lineWidth: 3,
     };
-    await PathChooser.loadFromUrl('./data/zu_nachbarn.gpx', 'unbekannte Beschaffenheit');
+    await PathChooser.loadFromUrl('./data/merged_nachbarn.gpx', 'unbekannte Beschaffenheit');
 }
 
 initializeMap();

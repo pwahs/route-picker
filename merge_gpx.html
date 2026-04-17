@@ -6,11 +6,17 @@
 </head>
 <body>
   <h1>GPX-Dateien zusammenführen</h1>
-  <input type="file" id="files" multiple accept=".gpx" />
+  <input type="file" id="files" multiple accept=".gpx" onchange="reset()" />
   <button onclick="merge()">Zusammenführen</button>
   <a id="download" style="display:none">⬇ Herunterladen</a>
 
   <script>
+    function reset() {
+      const link = document.getElementById('download');
+      link.style.display = 'none';
+      link.href = '';
+    }
+
     async function merge() {
       const files = document.getElementById('files').files;
       if (!files.length) return alert('Bitte GPX-Dateien auswählen.');

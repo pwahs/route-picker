@@ -1,8 +1,8 @@
 # Route Picker (Demo)
 
-Route Picker is an open source web tool for interactively selecting, previewing, and exporting custom routes from a set of waypoints and paths.
+Route Picker is an open source web tool for interactively selecting, previewing, and exporting custom routes from a set of existing waypoints and paths.
 
-- Select waypoints and paths on a map
+- Select waypoints and paths on the map
 - Preview and edit your route
 - Download your route as a GPX file
 
@@ -11,63 +11,71 @@ https://pwahs.github.io/route-picker/
 
 ## Minimal Usage
 
-You can run the demo by serving the example folder with any static web server.
+To embed this project on your website, you need the following HTML code, for example.
+For an alternative method with many more customization options, take a look at map.js and index.html as examples.
+
+If you are using WordPress or something similar, the use of JavaScript may be restricted.
+Solutions for this can be found here: https://www.ionos.de/digitalguide/hosting/blogs/javascript-in-wordpress-einbinden/
+
+```html
+<div id="map"></div>
+<div id="node_list"></div>
+
+<style>
+	#map { height: 70vh; }
+	#node_list { height: 25vh; overflow: auto; border: 1px solid #ccc; }
+</style>
+
+<link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
+
+<!-- Javascript starts here -->
+<script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+<script src="plugin.js"></script>
+
+<script>
+	const map = new maplibregl.Map({
+		container: 'map',
+		style: 'https://tiles.openfreemap.org/styles/liberty',
+		center: [13.137, 53.011],
+		zoom: 10,
+	});
+	PathChooser.setMap(map);
+	PathChooser.styles['Knotenpunkte'] = {
+			background: 'red',
+			border: 'none',
+			color: 'white',
+	};
+	PathChooser.styles['Radwege'] = {
+		lineColor: 'red',
+		lineWidth: 3,
+		opacity: 0.5,
+	};
+	PathChooser.loadFromUrl('./data/GPS-Daten_Knotenpunkte.xlsx');
+	PathChooser.loadFromUrl('./data/pfade.gpx', 'Radwege');
+</script>
+<!-- Javascript ends here -->
+```
 
 Required files:
 
-- `index.html`: page shell, library includes, and map/list containers
-- `plugin.js`: PathChooser implementation
-- `map.js`: map setup and data loading calls
-- `data/`: at least one input file (`.xlsx` and/or `.gpx`)
+- `plugin.js`: The only file you need from this project. Can be included via jsDelivr from GitHub as shown here, or you can download it and host it on your own server.
+- `data/GPS-Daten_Knotenpunkte.xlsx`: at least one input file containing the waypoints. In the example above, the file contains a sheet named 'Knotenpunkte'.
+- `data/pfade.gpx`: at least one input file containing the paths. If the routes are spread across many files, you can combine them here: https://pwahs.github.io/route-picker/merge_gpx.html
 
-Minimal steps:
+In addition, 3 external files are included, which are required for the underlying map framework MapLibre and for reading XLSX files:
+<link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 
-1. Start a static server in this folder (for example `python -m http.server 8000`).
-2. Open `http://localhost:8000` in your browser.
-3. Ensure `map.js` loads at least one dataset via `PathChooser.loadFromUrl(...)`.
+## Data File Format
 
-Minimal example:
+This tool reads two file types:
 
-```html
-<!doctype html>
-<html>
-	<head>
-		<meta charset="UTF-8" />
-		<link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
-		<script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
-		<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-		<script src="plugin.js"></script>
-		<style>
-			#map { height: 70vh; }
-			#node_list { height: 25vh; overflow: auto; border: 1px solid #ccc; }
-		</style>
-	</head>
-	<body>
-		<div id="map"></div>
-		<div id="node_list"></div>
-		<script>
-			const map = new maplibregl.Map({
-				container: 'map',
-				style: 'https://tiles.openfreemap.org/styles/liberty',
-				center: [13.137, 53.011],
-				zoom: 10,
-			});
-
-			PathChooser.setMap(map);
-			PathChooser.loadFromUrl('./data/GPS-Daten_Knotenpunkte.xlsx');
-		</script>
-	</body>
-</html>
-```
-
-## File format for data
-
-This tool reads two types of files:
-
-- Excel (`.xlsx`) for waypoint locations (stops, nodes)
+- Excel (`.xlsx`) for waypoints (stops/nodes)
 - GPX (`.gpx`) for route lines between waypoints
 
-Think of it like this:
+Simply put:
 
 - Excel = the important points on the map
 - GPX = the paths connecting those points
@@ -76,18 +84,18 @@ Think of it like this:
 
 What the importer expects:
 
-- You can have one or more sheets.
-- Each sheet name becomes a category/tag (for styling).
-- In each sheet, there must be one cell with the exact text `Knotenpunkte`.
-- Starting in the rows below that cell, the importer reads 3 columns:
+- A file can contain one or more sheets.
+- The sheet name is used as a category/tag (for styling).
+- In each sheet, exactly the text `Knotenpunkte` must appear in one cell.
+- In the rows below that cell, the importer reads 3 columns:
 - Column 1: waypoint name/label
 - Column 2: latitude
 - Column 3: longitude
 
 Coordinate format:
 
-- Works with numbers (for example `52.753252`)
-- Also works with direction letters (for example `52.753252°N`, `13.471438°E`)
+- Works with numbers (e.g. `52.753252`)
+- Also works with direction letters (e.g. `52.753252°N`, `13.471438°E`)
 - `S` and `W` are treated as negative values automatically.
 
 Rows are skipped when:
@@ -107,7 +115,7 @@ Simple Excel example:
 
 ### 2. GPX (`.gpx`) format for paths
 
-You can have multiple gpx files. All tracks in a file will be styled the same way, multiple files can be stylized individually.
+You can use multiple GPX files. All tracks in a file will be styled the same way; multiple files can be styled individually.
 
 What the importer expects:
 
@@ -135,13 +143,16 @@ Minimal GPX example:
 </gpx>
 ```
 
-### Practical tip
+### Note
 
-Load the Excel file first, then load the GPX files. This gives the GPX importer known waypoint targets to connect to.
+Always load the Excel file first, then load the GPX files. This way the GPX importer already knows the waypoints it should connect to.
 
-If you have the tracks as multiple files, this repo has a tool to help you: Combine them by opening merge_gpx.html in your browser, select the input files, and export the merged output GPX.
+If your tracks are spread across multiple files, a tool in this repository can help: open `merge_gpx.html` in your browser, select the input files, and export the merged GPX file. The tool is also available live at https://pwahs.github.io/route-picker/merge_gpx.html
+
 
 ## Styling and Customization
+
+The following guide details how the tool can be individually customized and styled.
 
 The demo exposes four configuration objects:
 
@@ -200,7 +211,7 @@ Template variables:
 Example:
 
 ```js
-PathChooser.styles['My Tag'] = {
+	PathChooser.styles['My Tag'] = {
 	background: '#ffffff',
 	border: '2px solid #0a84ff',
 	color: '#111111',
@@ -222,13 +233,13 @@ Supported keys in each tag style:
 - `color`: marker text color
 - `width`: marker width in px
 - `height`: marker height in px
-- `fontSize`: marker label font-size
+- `fontSize`: marker label font size
 - `shape`: `circle` or `square`
 - `lineColor`: path line color for this tag
 - `lineWidth`: path line width for this tag
 - `lineOpacity`: path line opacity for this tag
 - `opacity`: legacy alias for path opacity
-- `lineDasharray`: dash pattern for this tag path lines
+- `lineDasharray`: dash pattern for this tag's path lines
 
 ### `PathChooser.lineStyles` (global line groups)
 
@@ -286,8 +297,8 @@ Supported groups and keys:
 - `tourRepeat` (selected segment used multiple times)
 - `primaryColor`: color for alternating primary rings
 - `secondaryColor`: color for alternating secondary rings
-- `baseWidthPerOccurrence`: starting width multiplier per occurrence
-- `overlapAdjustment`: subtracts overlap from initial width
+- `baseWidthPerOccurrence`: starting width per occurrence
+- `overlapAdjustment`: overlap subtracted from initial width
 - `primaryShrink`: width reduction after each primary ring
 - `secondaryShrink`: width reduction after each secondary ring
 - `opacity`: line opacity for all repeat rings

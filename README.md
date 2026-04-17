@@ -6,60 +6,69 @@ Route Picker ist ein Open-Source-Webtool, mit dem Sie aus vorhandenen Wegpunkten
 - Route in der Vorschau ansehen und bearbeiten
 - Route als GPX-Datei herunterladen
 
+Es entstand aus einem Digitalisierungsprojektes des Mittelstand Zentrum Digital Tourismus (https://digitalzentrum-tourismus.de/) und der Brandenburgische Seenplatte GmbH (https://www.brandenburgische-seenplatte.de/).
+
 Eine Live-Demo finden Sie hier:
 https://pwahs.github.io/route-picker/
 
 ## Minimale Nutzung
 
-Sie können die Demo starten, indem Sie den Beispielordner mit einem beliebigen statischen Webserver bereitstellen.
+Um dieses Projekt auf Ihrer Webseite einzubinden, benötigen Sie z.B. den folgenden HTML-Code.
+Für eine alternative Methode mit mehr Anpassungsmöglichkeiten, schauen Sie sich map.js und index.html als Beispiele an.
+
+Falls Sie Wordpress oder ähnliches verwenden, ist die Nutzung von Javascript eventuell eingeschränkt.
+Hier können Lösungen dafür gefunden werden: https://www.ionos.de/digitalguide/hosting/blogs/javascript-in-wordpress-einbinden/
+
+```html
+<div id="map"></div>
+<div id="node_list"></div>
+
+<style>
+	#map { height: 70vh; }
+	#node_list { height: 25vh; overflow: auto; border: 1px solid #ccc; }
+</style>
+
+<link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
+
+<!-- Javascript startet hier -->
+<script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+<script src="plugin.js"></script>
+
+<script>
+	const map = new maplibregl.Map({
+		container: 'map',
+		style: 'https://tiles.openfreemap.org/styles/liberty',
+		center: [13.137, 53.011],
+		zoom: 10,
+	});
+	PathChooser.setMap(map);
+	PathChooser.styles['Knotenpunkte'] = {
+			background: 'red',
+			border: 'none',
+			color: 'white',
+	};
+	PathChooser.styles['Radwege'] = {
+		lineColor: 'red',
+		lineWidth: 3,
+		opacity: 0.5,
+	};
+	PathChooser.loadFromUrl('./data/GPS-Daten_Knotenpunkte.xlsx');
+	PathChooser.loadFromUrl('./data/pfade.gpx', 'Radwege');
+</script>
+<!-- Javascript Ende -->
+```
 
 Benötigte Dateien:
 
-- `index.html`: Grundseite mit Bibliotheken und den Containern für Karte/Liste
-- `plugin.js`: PathChooser-Logik
-- `map.js`: Karten-Setup und Laden der Daten
-- `data/`: mindestens eine Eingabedatei (`.xlsx` und/oder `.gpx`)
+- `plugin.js`: Die einzige Datei, die sie aus diesem Projekt brauchen. Kann wie hier angegeben über jsDelivr von github eingebunden werden, oder Sie laden sie runter und stellen Sie auf ihrem eigenen Server bereit.
+- `data/GPS-Daten_Knotenpunkte.xlsx`: mindestens eine Eingabedatei, die die Knotenpunkte enthält. Im oberen Beispiel enthält die Datei ein Sheet mit Namen 'Knotenpunkte'.
+- `data/pfade.gpx`: mindestens eine Eingabedatei, die die Pfade enthält. Wenn die Routen auf viele Dateien verteilt sind, können Sie sie hier kombinieren: https://pwahs.github.io/route-picker/merge_gpx.html
 
-Minimale Schritte:
-
-1. Starten Sie in diesem Ordner einen statischen Server (z. B. `python -m http.server 8000`).
-2. Öffnen Sie `http://localhost:8000` im Browser.
-3. Stellen Sie sicher, dass `map.js` mindestens einen Datensatz mit `PathChooser.loadFromUrl(...)` lädt.
-
-Minimales Beispiel:
-
-```html
-<!doctype html>
-<html>
-	<head>
-		<meta charset="UTF-8" />
-		<link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
-		<script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
-		<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-		<script src="plugin.js"></script>
-		<style>
-			#map { height: 70vh; }
-			#node_list { height: 25vh; overflow: auto; border: 1px solid #ccc; }
-		</style>
-	</head>
-	<body>
-		<div id="map"></div>
-		<div id="node_list"></div>
-		<script>
-			const map = new maplibregl.Map({
-				container: 'map',
-				style: 'https://tiles.openfreemap.org/styles/liberty',
-				center: [13.137, 53.011],
-				zoom: 10,
-			});
-
-			PathChooser.setMap(map);
-			PathChooser.loadFromUrl('./data/GPS-Daten_Knotenpunkte.xlsx');
-			PathChooser.loadFromUrl('./data/pfade.gpx', 'Radwege');
-		</script>
-	</body>
-</html>
-```
+Außerdem werden 3 externe Dateien eingebunden, die für das zugrunde liegende Karten-Framework MapLibre und zum Lesen von XLSX Dateien benötigt werden:
+<link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 
 ## Dateiformat der Daten
 
@@ -136,11 +145,12 @@ Minimales GPX-Beispiel:
 </gpx>
 ```
 
-### Praktischer Tipp
+### Hinweis
 
-Laden Sie zuerst die Excel-Datei und danach die GPX-Dateien. So kennt der GPX-Import bereits die Wegpunkte, mit denen er verbinden soll.
+Laden Sie immer zuerst die Excel-Datei und danach die GPX-Dateien. So kennt der GPX-Import bereits die Wegpunkte, mit denen er verbinden soll.
 
-Wenn Ihre Tracks auf mehrere Dateien verteilt sind, hilft ein Tool in diesem Repository: Öffnen Sie `merge_gpx.html` im Browser, wählen Sie die Eingabedateien und exportieren Sie die zusammengeführte GPX-Datei.
+Wenn Ihre Tracks auf mehrere Dateien verteilt sind, hilft ein Tool in diesem Repository: Öffnen Sie `merge_gpx.html` im Browser, wählen Sie die Eingabedateien und exportieren Sie die zusammengeführte GPX-Datei. Das Tool ist auch live unter https://pwahs.github.io/route-picker/merge_gpx.html
+
 
 ## Styling und Anpassung
 
