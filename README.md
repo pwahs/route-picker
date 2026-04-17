@@ -6,12 +6,12 @@ Route Picker ist ein Open-Source-Webtool, mit dem Sie aus vorhandenen Wegpunkten
 - Route in der Vorschau ansehen und bearbeiten
 - Route als GPX-Datei herunterladen
 
-Es entstand aus einem Digitalisierungsprojektes des Mittelstand Zentrum Digital Tourismus (https://digitalzentrum-tourismus.de/) und der Brandenburgische Seenplatte GmbH (https://www.brandenburgische-seenplatte.de/).
+Es entstand aus einem Digitalisierungsprojektes des Mittelstand-Digital Zentrum Tourismus (https://digitalzentrum-tourismus.de/) und der Brandenburgische Seenplatte GmbH (https://www.brandenburgische-seenplatte.de/).
 
 Eine Live-Demo finden Sie hier:
-https://pwahs.github.io/route-picker/
+https://mittelstand-digital-zentrum-tourismus.github.io/route-picker/
 
-## Minimale Nutzung
+## Minimalbeispiel
 
 Um dieses Projekt auf Ihrer Webseite einzubinden, benötigen Sie z.B. den folgenden HTML-Code.
 Für eine alternative Methode mit mehr Anpassungsmöglichkeiten, schauen Sie sich map.js und index.html als Beispiele an.
@@ -63,12 +63,16 @@ Benötigte Dateien:
 
 - `plugin.js`: Die einzige Datei, die sie aus diesem Projekt brauchen. Kann wie hier angegeben über jsDelivr von github eingebunden werden, oder Sie laden sie runter und stellen Sie auf ihrem eigenen Server bereit.
 - `data/GPS-Daten_Knotenpunkte.xlsx`: mindestens eine Eingabedatei, die die Knotenpunkte enthält. Im oberen Beispiel enthält die Datei ein Sheet mit Namen 'Knotenpunkte'.
-- `data/pfade.gpx`: mindestens eine Eingabedatei, die die Pfade enthält. Wenn die Routen auf viele Dateien verteilt sind, können Sie sie hier kombinieren: https://pwahs.github.io/route-picker/merge_gpx.html
+- `data/pfade.gpx`: mindestens eine Eingabedatei, die die Pfade enthält. Wenn die Routen auf viele Dateien verteilt sind, können Sie sie hier kombinieren: 
+https://mittelstand-digital-zentrum-tourismus.github.io/route-picker/merge_gpx.html
 
 Außerdem werden 3 externe Dateien eingebunden, die für das zugrunde liegende Karten-Framework MapLibre und zum Lesen von XLSX Dateien benötigt werden:
+
+```html
 <link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
 <script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+```
 
 ## Dateiformat der Daten
 
@@ -149,7 +153,8 @@ Minimales GPX-Beispiel:
 
 Laden Sie immer zuerst die Excel-Datei und danach die GPX-Dateien. So kennt der GPX-Import bereits die Wegpunkte, mit denen er verbinden soll.
 
-Wenn Ihre Tracks auf mehrere Dateien verteilt sind, hilft ein Tool in diesem Repository: Öffnen Sie `merge_gpx.html` im Browser, wählen Sie die Eingabedateien und exportieren Sie die zusammengeführte GPX-Datei. Das Tool ist auch live unter https://pwahs.github.io/route-picker/merge_gpx.html
+Wenn Ihre Tracks auf mehrere Dateien verteilt sind, hilft ein Tool in diesem Repository: Öffnen Sie `merge_gpx.html` im Browser, wählen Sie die Eingabedateien und exportieren Sie die zusammengeführte GPX-Datei. Das Tool ist auch live unter 
+https://mittelstand-digital-zentrum-tourismus.github.io/route-picker/merge_gpx.html
 
 
 ## Styling und Anpassung

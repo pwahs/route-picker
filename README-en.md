@@ -6,10 +6,12 @@ Route Picker is an open source web tool for interactively selecting, previewing,
 - Preview and edit your route
 - Download your route as a GPX file
 
-A live demo is available here:
-https://pwahs.github.io/route-picker/
+It was created during a digitalization project between the Mittelstand-Digital Zentrum Tourismus (https://digitalzentrum-tourismus.de/) and the Brandenburgische Seenplatte GmbH (https://www.brandenburgische-seenplatte.de/).
 
-## Minimal Usage
+A live demo is available here:
+https://mittelstand-digital-zentrum-tourismus.github.io/route-picker/
+
+## Minimal Example
 
 To embed this project on your website, you need the following HTML code, for example.
 For an alternative method with many more customization options, take a look at map.js and index.html as examples.
@@ -61,13 +63,16 @@ Required files:
 
 - `plugin.js`: The only file you need from this project. Can be included via jsDelivr from GitHub as shown here, or you can download it and host it on your own server.
 - `data/GPS-Daten_Knotenpunkte.xlsx`: at least one input file containing the waypoints. In the example above, the file contains a sheet named 'Knotenpunkte'.
-- `data/pfade.gpx`: at least one input file containing the paths. If the routes are spread across many files, you can combine them here: https://pwahs.github.io/route-picker/merge_gpx.html
+- `data/pfade.gpx`: at least one input file containing the paths. If the routes are spread across many files, you can combine them here: 
+https://mittelstand-digital-zentrum-tourismus.github.io/route-picker/merge_gpx.html
 
 In addition, 3 external files are included, which are required for the underlying map framework MapLibre and for reading XLSX files:
+
+```html
 <link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
 <script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-
+```
 ## Data File Format
 
 This tool reads two file types:
@@ -147,7 +152,8 @@ Minimal GPX example:
 
 Always load the Excel file first, then load the GPX files. This way the GPX importer already knows the waypoints it should connect to.
 
-If your tracks are spread across multiple files, a tool in this repository can help: open `merge_gpx.html` in your browser, select the input files, and export the merged GPX file. The tool is also available live at https://pwahs.github.io/route-picker/merge_gpx.html
+If your tracks are spread across multiple files, a tool in this repository can help: open `merge_gpx.html` in your browser, select the input files, and export the merged GPX file. The tool is also available live at 
+https://mittelstand-digital-zentrum-tourismus.github.io/route-picker/merge_gpx.html
 
 
 ## Styling and Customization
