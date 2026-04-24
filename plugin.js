@@ -7,7 +7,7 @@ window.PathChooser = window.PathChooser || {};
  * @type {Object<string, any>}
  */
 window.PathChooser.config = window.PathChooser.config || {
-    matchThresholdMeters: 50,
+    matchThresholdMeters: 60,
     maxDistanceCacheSize: 10000,
 };
 

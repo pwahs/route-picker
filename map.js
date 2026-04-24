@@ -11,13 +11,8 @@ async function initializeMap() {
     PathChooser.setMap(map);
 
     // ── Waypoint styles per tag, tag comes from the xlsx sheet names ────────────
-    PathChooser.styles['ehem. Ruppiner Seenland'] = {
-        background: '#E00000',
-        border: 'none',
-        color: 'white',
-    };
-    PathChooser.styles['ehem. BARnimer Land'] = {
-        background: '#FF2020',
+    PathChooser.styles['Knotenpunkt'] = {
+        background: '#FF0000',
         border: 'none',
         color: 'white',
     };
@@ -29,7 +24,7 @@ async function initializeMap() {
         fontSize: '10',
         color: 'white',
     };
-    PathChooser.styles['geplante Knotenpunkte'] = {
+    PathChooser.styles['Knotenpunkt in Planung'] = {
         background: 'white',
         border: '1px solid red',
         color: 'red',
