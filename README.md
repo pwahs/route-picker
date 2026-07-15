@@ -1,6 +1,6 @@
-# Route Picker (Demo)
+# RoutePicker (Demo)
 
-Route Picker ist ein Open-Source-Webtool, mit dem Sie aus vorhandenen Wegpunkten und Strecken interaktiv eigene Routen auswählen, ansehen und als GPX exportieren können.
+RoutePicker ist ein Open-Source-Webtool, mit dem Sie aus vorhandenen Wegpunkten und Strecken interaktiv eigene Routen auswählen, ansehen und als GPX exportieren können.
 
 - Wegpunkte und Strecken auf der Karte auswählen
 - Route in der Vorschau ansehen und bearbeiten
