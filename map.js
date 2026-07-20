@@ -54,7 +54,7 @@ async function initializeMap() {
         width: 2,
         opacity: 1,
     };
-    await PathChooser.loadFromUrl('./data/GPS-Daten_Knotenpunkte_komplett.xlsx');
+    await PathChooser.loadFromUrl('./data/knotenpunkte.xlsx');
 
     // ── Path styles per tag ───────────────────────────────────────────
     PathChooser.styles['≥ 90 % leicht befahrbar'] = {
@@ -62,20 +62,20 @@ async function initializeMap() {
         lineWidth: 3,
         opacity: 0.5,
     };
-    await PathChooser.loadFromUrl('./data/merged_gut.gpx', '≥ 90 % leicht befahrbar');
+    await PathChooser.loadFromUrl('./data/00_GPX_gutbeschaffen.gpx', '≥ 90 % leicht befahrbar');
    
     PathChooser.styles['>10 % technisch anspruchsvoll'] = {
         lineColor: 'red',
         lineWidth: 3,
         lineDasharray: [3, 3],  // 3px dash, 3px gap
     };
-    await PathChooser.loadFromUrl('./data/merged_weniger_gut.gpx', '>10 % technisch anspruchsvoll');
+    await PathChooser.loadFromUrl('./data/00_GPX_schlechtbeschaffen.gpx', '>10 % technisch anspruchsvoll');
     
     PathChooser.styles['unbekannte Beschaffenheit'] = {
         lineColor: 'grey',
         lineWidth: 3,
     };
-    await PathChooser.loadFromUrl('./data/merged_nachbarn.gpx', 'unbekannte Beschaffenheit');
+    await PathChooser.loadFromUrl('./data/00_GPX_Nachbar_merged.gpx', 'unbekannte Beschaffenheit');
 }
 
 initializeMap();
