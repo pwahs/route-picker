@@ -28,10 +28,10 @@ Solutions for this can be found here: https://www.ionos.de/digitalguide/hosting/
 	#node_list { height: 25vh; overflow: auto; border: 1px solid #ccc; }
 </style>
 
-<link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
+<link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet" />
 
 <!-- Javascript starts here -->
-<script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/Mittelstand-Digital-Zentrum-Tourismus/route-picker@main/plugin.js"></script>
 
@@ -69,8 +69,8 @@ https://mittelstand-digital-zentrum-tourismus.github.io/route-picker/merge_gpx.h
 In addition, 3 external files are included, which are required for the underlying map framework MapLibre and for reading XLSX files:
 
 ```html
-<link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
-<script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 ```
 ## Data File Format
